@@ -68,33 +68,35 @@ public final class MainActivity extends Activity {
         EditText mail=field("Электронная почта", "", InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
         EditText pass=field("Пароль", "", InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         l.addView(url);l.addView(mail);l.addView(pass);
+        TextView status=text("",16);
         Button enter=button("Войти",()->{
             String address=url.getText().toString().trim(), username=mail.getText().toString().trim(), password=pass.getText().toString();
             if(address.isEmpty()||username.isEmpty()||password.isEmpty()){error("Заполните адрес, почту и пароль.");return;}
             try { Uri u=Uri.parse(address); if(!("http".equals(u.getScheme())||"https".equals(u.getScheme()))||u.getHost()==null||u.getUserInfo()!=null||u.getQuery()!=null||u.getFragment()!=null) throw new Exception(); }
             catch(Exception ex){error("Введите корректный адрес сервера с http:// или https://");return;}
             server=address.replaceAll("/+$", ""); int request=++generation;
+            Button loginButton=(Button)status.getTag();loginButton.setEnabled(false);status.setText("Вход в Shinobi…");
             io.execute(()->{try {
                 String data="mail="+enc(username)+"&pass="+enc(password)+"&function=dash&machineID="+enc(machineId());
                 JSONObject j=new JSONObject(request("POST",server+"/?json=true",data));
                 JSONObject user=j.optJSONObject("$user"); if(user==null) user=j;
                 String a=user.optString("auth_token",user.optString("auth","")), g=user.optString("ke","");
                 String u=user.optString("uid","");
-                if(a.isEmpty()&&!g.isEmpty()&&!u.isEmpty()){ui(request,()->promptFactor(g,u,request));return;}
+                if(a.isEmpty()&&!g.isEmpty()&&!u.isEmpty()){ui(request,()->{loginButton.setEnabled(true);status.setText("");promptFactor(g,u,request,loginButton,status);});return;}
                 if(a.isEmpty()||g.isEmpty()||u.isEmpty()) throw new IOException("Не удалось войти. Проверьте данные.");
-                auth=a;group=g;uid=u;connectSocket();loadCameras(request);
-            } catch(Exception ex){ui(request,()->error(safeError(ex)));}});
-        });l.addView(enter);
+                auth=a;group=g;uid=u;ui(request,()->status.setText("Подключение камер…"));connectSocket();loadCameras(request);
+            } catch(Exception ex){closeSocket();auth=null;group=null;uid=null;ui(request,()->{loginButton.setEnabled(true);status.setText("");error(safeError(ex));});}});
+        });status.setTag(enter);l.addView(enter);l.addView(status);
     }
     private String machineId(){String s=getPreferences(MODE_PRIVATE).getString("machine_id","");if(s.isEmpty()){s=UUID.randomUUID().toString();getPreferences(MODE_PRIVATE).edit().putString("machine_id",s).apply();}return s;}
-    private void promptFactor(String ke,String userId,int requestId){
+    private void promptFactor(String ke,String userId,int requestId,Button loginButton,TextView status){
         EditText code=field("Код подтверждения","",InputType.TYPE_CLASS_NUMBER);
         new AlertDialog.Builder(this).setTitle("Подтверждение входа").setView(code).setNegativeButton("Отмена",null).setPositiveButton("Войти",(dialog,which)->{
-            String value=code.getText().toString().trim();io.execute(()->{try{String data="ke="+enc(ke)+"&id="+enc(userId)+"&machineID="+enc(machineId())+"&factorAuthKey="+enc(value)+"&function=dash";JSONObject j=new JSONObject(request("POST",server+"/?json=true",data));JSONObject u=j.optJSONObject("$user");if(u==null)u=j;String a=u.optString("auth_token","");if(a.isEmpty())throw new IOException("Не удалось подтвердить вход.");auth=a;group=u.optString("ke",ke);uid=u.optString("uid",userId);connectSocket();loadCameras(requestId);}catch(Exception e){ui(requestId,()->error(safeError(e)));}});
+            String value=code.getText().toString().trim();loginButton.setEnabled(false);status.setText("Подтверждение входа…");io.execute(()->{try{String data="ke="+enc(ke)+"&id="+enc(userId)+"&machineID="+enc(machineId())+"&factorAuthKey="+enc(value)+"&function=dash";JSONObject j=new JSONObject(request("POST",server+"/?json=true",data));JSONObject u=j.optJSONObject("$user");if(u==null)u=j;String a=u.optString("auth_token","");if(a.isEmpty())throw new IOException("Не удалось подтвердить вход.");auth=a;group=u.optString("ke",ke);uid=u.optString("uid",userId);ui(requestId,()->status.setText("Подключение камер…"));connectSocket();loadCameras(requestId);}catch(Exception e){closeSocket();auth=null;group=null;uid=null;ui(requestId,()->{loginButton.setEnabled(true);status.setText("");error(safeError(e));});}});
         }).show();
     }
     private void connectSocket() throws Exception {
-        closeSocket();CountDownLatch ready=new CountDownLatch(1);IO.Options options=IO.Options.builder().setPath("/socket.io").build();Socket s=IO.socket(server,options);socket=s;
+        closeSocket();CountDownLatch ready=new CountDownLatch(1);IO.Options options=IO.Options.builder().setPath("/socket.io").setTransports(new String[]{"websocket"}).build();Socket s=IO.socket(server,options);socket=s;
         s.on(Socket.EVENT_CONNECT,args->{try{s.emit("f",new JSONObject().put("f","init").put("ke",group).put("uid",uid).put("auth",auth));}catch(JSONException ignored){}});
         s.on("f",args->{if(args.length>0&&args[0] instanceof JSONObject&&"init_success".equals(((JSONObject)args[0]).optString("f"))){socketReady=true;ready.countDown();}});
         s.on(Socket.EVENT_DISCONNECT,args->{socketReady=false;watched.clear();});s.connect();
