@@ -32,6 +32,8 @@ public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final List<MediaPlayer> players = new ArrayList<>();
     private LibVLC vlc;
+    private LibVLC archiveVlc;
+    private VideoView recordingVideo;
     private LinearLayout root;
     private String server, auth, group, uid;
     private Socket socket;
@@ -157,23 +159,47 @@ public final class MainActivity extends Activity {
             String url=useSub?subUrl(c):mainUrl(c);ui(current,()->attach(view,url));
         }catch(Exception e){ui(current,()->Toast.makeText(this,"Поток «"+c.name+"» недоступен",Toast.LENGTH_SHORT).show());}});
     }
-    private void attach(VLCVideoLayout view,String url){attach(view,url,null,0);}
-    private void attach(VLCVideoLayout view,String url,Boolean hardware,long startTime){
-        MediaPlayer p=new MediaPlayer(vlc);players.add(p);p.attachViews(view,null,false,false);
+    private void attach(VLCVideoLayout view,String url){attach(view,url,null,0,null,0);}
+    private void attach(VLCVideoLayout view,String url,Boolean hardware,long startTime,TextView status,int requestId){
+        LibVLC engine=vlc;
+        if(hardware!=null){if(archiveVlc==null)archiveVlc=new LibVLC(this,new ArrayList<>(Arrays.asList("--network-caching=3000","--quiet")));engine=archiveVlc;}
+        MediaPlayer p=new MediaPlayer(engine);players.add(p);p.attachViews(view,null,false,false);
         int[] attempts={0};boolean[] seekPending={startTime>0};Handler handler=new Handler(Looper.getMainLooper());
-        p.setEventListener(event->{if(event.type==MediaPlayer.Event.Playing&&seekPending[0]){seekPending[0]=false;p.setTime(startTime);}else if(event.type==MediaPlayer.Event.EncounteredError){handler.postDelayed(()->{if(!players.contains(p))return;if(attempts[0]++<3){p.stop();p.play();}else Toast.makeText(this,"Не удалось воспроизвести видео",Toast.LENGTH_SHORT).show();},2000);}});
-        Media m=new Media(vlc,Uri.parse(url));if(hardware!=null)m.setHWDecoderEnabled(hardware,false);p.setMedia(m);m.release();p.setVolume(0);p.play();
+        p.setEventListener(event->{
+            if(event.type==MediaPlayer.Event.Playing){if(seekPending[0]){seekPending[0]=false;p.setTime(startTime);}if(status!=null)ui(requestId,()->status.setText("Воспроизведение"));}
+            else if(event.type==MediaPlayer.Event.Buffering&&status!=null){int percent=Math.round(event.getBuffering());ui(requestId,()->status.setText(percent<100?"Буферизация: "+percent+"%":"Воспроизведение"));}
+            else if(event.type==MediaPlayer.Event.Paused&&status!=null)ui(requestId,()->status.setText("Пауза"));
+            else if(event.type==MediaPlayer.Event.EncounteredError){if(status!=null)ui(requestId,()->status.setText("Ошибка воспроизведения"));handler.postDelayed(()->{if(!players.contains(p))return;if(attempts[0]++<3){p.stop();p.play();}else Toast.makeText(this,"Не удалось воспроизвести видео",Toast.LENGTH_SHORT).show();},2000);}
+        });
+        Media m=new Media(engine,Uri.parse(url));if(hardware!=null){m.addOption(":network-caching=3000");m.setHWDecoderEnabled(hardware,false);}p.setMedia(m);m.release();p.setVolume(0);p.play();
     }
     private void showCamera(Camera c,boolean high){int g=++generation;LinearLayout page=layout();screen(page);LinearLayout bar=new LinearLayout(this);bar.addView(button("← Камеры",this::showGrid));bar.addView(text(c.name,21),new LinearLayout.LayoutParams(0,-2,1));page.addView(bar);VLCVideoLayout video=new VLCVideoLayout(this);page.addView(video,new LinearLayout.LayoutParams(-1,0,1));LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER);actions.addView(button(high?"Обычное качество":"Полное качество",()->showCamera(c,!high)));actions.addView(button("Архив",()->showArchive(c)));page.addView(actions);loadStream(c,high,video,g);}
     private void showArchive(Camera c){int g=++generation;LinearLayout page=layout();screen(page);page.addView(button("← Камера",()->showCamera(c,false)));page.addView(text("Архив · "+c.name,22));ScrollView sv=new ScrollView(this);LinearLayout list=layout();sv.addView(list);page.addView(sv,new LinearLayout.LayoutParams(-1,0,1));TextView status=text("Загрузка…",16);list.addView(status);
         io.execute(()->{try{JSONObject result=new JSONObject(request("GET",api("videos/"+Uri.encode(group)+"/"+Uri.encode(c.id)+"?limit=100"),null));if(!result.optBoolean("ok",true))throw new IOException("Не удалось получить архив.");JSONArray videos=result.optJSONArray("videos");if(videos==null)throw new IOException("Не удалось получить архив.");ui(g,()->{list.removeAllViews();if(videos.length()==0)list.addView(text("Записей нет",16));for(int i=0;i<videos.length();i++){JSONObject v=videos.optJSONObject(i);if(v==null)continue;String href=v.optString("href","");String time=v.optString("time","Запись");if(href.isEmpty())continue;try{URL base=new URL(server+"/");URL resolved=new URL(base,href);if(!resolved.getHost().equalsIgnoreCase(base.getHost())||resolved.getPort()!=base.getPort()||!resolved.getProtocol().equals(base.getProtocol()))continue;String play=resolved.toString();list.addView(button(time,()->showRecording(c,time,play)));}catch(Exception ignored){}}});}catch(Exception e){ui(g,()->status.setText("Не удалось загрузить архив"));}});
     }
-    private void showRecording(Camera c,String title,String url){showRecording(c,title,url,false,0);}
-    private void showRecording(Camera c,String title,String url,boolean hardware,long startTime){++generation;LinearLayout page=layout();screen(page);page.addView(button("← Архив",()->showArchive(c)));page.addView(text(title,16));VLCVideoLayout video=new VLCVideoLayout(this);page.addView(video,new LinearLayout.LayoutParams(-1,0,1));attach(video,url,hardware,startTime);LinearLayout controls=new LinearLayout(this);controls.addView(button("−10 с",()->seek(-10000)));controls.addView(button("Пауза / пуск",()->{if(!players.isEmpty()){MediaPlayer p=players.get(0);if(p.isPlaying())p.pause();else p.play();}}));controls.addView(button("+10 с",()->seek(10000)));page.addView(controls);page.addView(button(hardware?"Режим видео: аппаратный":"Режим видео: совместимый",()->{long time=players.isEmpty()?0:Math.max(0,players.get(0).getTime());showRecording(c,title,url,!hardware,time);}));}
-    private void seek(long delta){if(!players.isEmpty()){MediaPlayer p=players.get(0);p.setTime(Math.max(0,p.getTime()+delta));}}
-    private void releasePlayers(){for(MediaPlayer p:players){try{p.stop();p.detachViews();p.release();}catch(Exception ignored){}}players.clear();}
+    private void showRecording(Camera c,String title,String url){showRecording(c,title,url,0,0);}
+    private void showRecording(Camera c,String title,String url,int mode,long startTime){
+        int g=++generation;LinearLayout page=layout();screen(page);page.addView(button("← Архив",()->showArchive(c)));page.addView(text(title,16));
+        TextView status=text("Загрузка…",14),progress=text("00:00",14);
+        if(mode==0){
+            VideoView video=new VideoView(this);recordingVideo=video;page.addView(video,new LinearLayout.LayoutParams(-1,0,1));
+            video.setOnPreparedListener(mp->{if(g!=generation)return;mp.setVolume(0,0);if(startTime>0)video.seekTo((int)Math.min(Integer.MAX_VALUE,startTime));video.start();status.setText("Воспроизведение");});
+            video.setOnInfoListener((mp,what,extra)->{if(g!=generation)return false;if(what==android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START)status.setText("Буферизация…");else if(what==android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END)status.setText("Воспроизведение");return false;});
+            video.setOnErrorListener((mp,what,extra)->{if(g==generation)status.setText("Не удалось воспроизвести запись. Попробуйте другой режим.");return true;});
+            video.setOnCompletionListener(mp->{if(g==generation)status.setText("Запись закончилась");});video.setVideoURI(Uri.parse(url));
+        }else{
+            VLCVideoLayout video=new VLCVideoLayout(this);page.addView(video,new LinearLayout.LayoutParams(-1,0,1));attach(video,url,mode==2,startTime,status,g);
+        }
+        LinearLayout info=new LinearLayout(this);info.addView(status,new LinearLayout.LayoutParams(0,-2,1));info.addView(progress);page.addView(info);
+        LinearLayout controls=new LinearLayout(this);controls.addView(button("−10 с",()->seek(-10000)));controls.addView(button("Пауза / пуск",()->{if(recordingVideo!=null){if(recordingVideo.isPlaying()){recordingVideo.pause();status.setText("Пауза");}else recordingVideo.start();}else if(!players.isEmpty()){MediaPlayer p=players.get(0);if(p.isPlaying())p.pause();else p.play();}}));controls.addView(button("+10 с",()->seek(10000)));page.addView(controls);
+        String[] modeNames={"системный","совместимый VLC","аппаратный VLC"};page.addView(button("Режим видео: "+modeNames[mode],()->showRecording(c,title,url,(mode+1)%modeNames.length,recordingPosition())));
+        Handler timer=new Handler(Looper.getMainLooper());Runnable refresh=new Runnable(){public void run(){if(g!=generation||isFinishing())return;long sec=recordingPosition()/1000;progress.setText(String.format(java.util.Locale.ROOT,"%02d:%02d",sec/60,sec%60));timer.postDelayed(this,1000);}};timer.post(refresh);
+    }
+    private long recordingPosition(){if(recordingVideo!=null)return Math.max(0,recordingVideo.getCurrentPosition());return players.isEmpty()?0:Math.max(0,players.get(0).getTime());}
+    private void seek(long delta){if(recordingVideo!=null)recordingVideo.seekTo((int)Math.min(Integer.MAX_VALUE,Math.max(0,recordingPosition()+delta)));else if(!players.isEmpty()){MediaPlayer p=players.get(0);p.setTime(Math.max(0,p.getTime()+delta));}}
+    private void releasePlayers(){if(recordingVideo!=null){recordingVideo.stopPlayback();recordingVideo=null;}for(MediaPlayer p:players){try{p.stop();p.detachViews();p.release();}catch(Exception ignored){}}players.clear();}
     @Override public void onBackPressed(){if(auth!=null)showGrid();else super.onBackPressed();}
     @Override protected void onStop(){super.onStop();if(auth!=null){generation++;releasePlayers();closeSocket();resumeConnection=true;}}
     @Override protected void onStart(){super.onStart();if(resumeConnection&&auth!=null){resumeConnection=false;int g=++generation;io.execute(()->{try{connectSocket();loadCameras(g);}catch(Exception e){ui(g,()->{showLogin();error("Сессия завершена. Войдите снова.");});}});}}
-    @Override protected void onDestroy(){generation++;releasePlayers();closeSocket();io.shutdownNow();vlc.release();super.onDestroy();}
+    @Override protected void onDestroy(){generation++;releasePlayers();closeSocket();io.shutdownNow();if(archiveVlc!=null)archiveVlc.release();vlc.release();super.onDestroy();}
 }
