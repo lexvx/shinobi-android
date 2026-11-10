@@ -1,0 +1,25 @@
+package ru.lex42.shinobiviewer;
+import java.util.Arrays;
+import java.util.List;
+public final class ArchiveTimelineTest {
+    static final class R implements ArchiveTimeline.Interval {
+        final long s,e; R(long s,long e){this.s=s;this.e=e;}
+        public long startMs(){return s;} public long endMs(){return e;}
+    }
+    public static void main(String[] args) {
+        long epoch=1794297600000L;
+        R first=new R(epoch,epoch+300000),next=new R(epoch+300000,epoch+600000),later=new R(epoch+900000,epoch+1200000);
+        List<R> rows=Arrays.asList(later,next,first);
+        check(ArchiveTimeline.at(rows,epoch)==first,"inclusive start");
+        check(ArchiveTimeline.at(rows,epoch+300000)==next,"segment boundary");
+        check(ArchiveTimeline.at(rows,epoch+700000)==null,"gap is not stale frame");
+        check(ArchiveTimeline.at(rows,epoch-1)==null,"before first recording");
+        check(ArchiveTimeline.at(rows,epoch+1200000)==null,"exclusive end");
+        check(ArchiveTimeline.offset(next,epoch+305000)==5000,"shared clock uses absolute offset");
+        check(ArchiveTimeline.clamp(epoch+2000000,epoch,epoch+1200000)==epoch+1199999,"end clamped to playable instant");
+        R overlap=new R(epoch+100000,epoch+200000);
+        check(ArchiveTimeline.at(Arrays.asList(first,overlap),epoch+150000)==overlap,"latest overlapping segment selected");
+        System.out.println("ArchiveTimeline: 8 tests passed");
+    }
+    static void check(boolean ok,String name){if(!ok)throw new AssertionError(name);}
+}

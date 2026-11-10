@@ -1,107 +1,65 @@
 package ru.lex42.shinobiviewer;
-
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.graphics.Color;
+import android.app.*;
+import android.content.*;
+import android.content.pm.ActivityInfo;
+import android.graphics.*;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.os.*;
 import android.text.InputType;
-import android.view.Gravity;
-import android.view.View;
-import android.view.WindowManager;
+import android.view.*;
 import android.widget.*;
 import org.json.*;
-import org.videolan.libvlc.LibVLC;
-import org.videolan.libvlc.Media;
-import org.videolan.libvlc.MediaPlayer;
+import org.videolan.libvlc.*;
 import org.videolan.libvlc.util.VLCVideoLayout;
-import java.io.*;
-import java.net.*;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.regex.*;
 import io.socket.client.IO;
 import io.socket.client.Socket;
 import io.socket.emitter.Emitter;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.*;
 
-/** A small Shinobi API client. Credentials and monitor configurations are kept in memory only. */
 public final class MainActivity extends Activity {
-    private final ExecutorService io = Executors.newSingleThreadExecutor();
-    private final List<MediaPlayer> players = new ArrayList<>();
-    private LibVLC vlc;
-    private LibVLC archiveVlc;
-    private VideoView recordingVideo;
-    private LinearLayout root;
-    private String server, auth, group, uid;
-    private Socket socket;
-    private volatile boolean socketReady;
-    private final Set<String> watched = ConcurrentHashMap.newKeySet();
-    private volatile int generation = 0;
-    private boolean resumeConnection;
-    private static final int BG = Color.rgb(16,22,29), CARD = Color.rgb(28,38,49), TEXT = Color.WHITE;
-    private final ArrayList<Camera> cameras = new ArrayList<>();
-
-    private static final class Camera {
-        String id, name, mainType, subType;
-        boolean primaryIsLow, dynamicAvailable;
-        int dynamicChannel;
-    }
-    @Override public void onCreate(Bundle saved) {
-        super.onCreate(saved);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        vlc = new LibVLC(this, new ArrayList<>(Arrays.asList("--network-caching=300", "--drop-late-frames", "--quiet")));
-        showLogin();
-    }
-    private int dp(int x) { return (int)(x * getResources().getDisplayMetrics().density + .5f); }
-    private LinearLayout layout() {
-        LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(dp(16),dp(16),dp(16),dp(16)); l.setBackgroundColor(BG); return l;
-    }
-    private void screen(LinearLayout l) { releasePlayers(); unwatchAll(); root=l; setContentView(l); }
-    private TextView text(String s, int size) { TextView t=new TextView(this); t.setText(s);t.setTextSize(size);t.setTextColor(TEXT); return t; }
-    private Button button(String s, Runnable click) { Button b=new Button(this);b.setText(s);b.setAllCaps(false);b.setOnClickListener(v->click.run());return b; }
-    private EditText field(String hint, String value, int type) { EditText e=new EditText(this);e.setSingleLine(true);e.setHint(hint);e.setText(value);e.setInputType(type);e.setTextColor(TEXT);e.setHintTextColor(Color.LTGRAY);return e; }
-    private void error(String s) { if(!isFinishing()) new AlertDialog.Builder(this).setMessage(s).setPositiveButton("Понятно",null).show(); }
-    private void showLogin() {
-        generation++; LinearLayout l=layout();screen(l);l.addView(text("Камеры Shinobi",28));l.addView(text("Подключение к серверу",16));
-        EditText url=field("Адрес сервера", "https://cam.lex42.ru", InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
-        EditText mail=field("Электронная почта", "", InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
-        EditText pass=field("Пароль", "", InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        l.addView(url);l.addView(mail);l.addView(pass);
-        TextView status=text("",16);
-        Button enter=button("Войти",()->{
-            String address=url.getText().toString().trim(), username=mail.getText().toString().trim(), password=pass.getText().toString();
-            if(address.isEmpty()||username.isEmpty()||password.isEmpty()){error("Заполните адрес, почту и пароль.");return;}
-            try { Uri u=Uri.parse(address); if(!("http".equals(u.getScheme())||"https".equals(u.getScheme()))||u.getHost()==null||u.getUserInfo()!=null||u.getQuery()!=null||u.getFragment()!=null) throw new Exception(); }
-            catch(Exception ex){error("Введите корректный адрес сервера с http:// или https://");return;}
-            server=address.replaceAll("/+$", ""); int request=++generation;
-            Button loginButton=(Button)status.getTag();loginButton.setEnabled(false);status.setText("Вход в Shinobi…");
-            io.execute(()->{try {
-                String data="mail="+enc(username)+"&pass="+enc(password)+"&function=dash&machineID="+enc(machineId());
-                JSONObject j=new JSONObject(request("POST",server+"/?json=true",data));
-                JSONObject user=j.optJSONObject("$user"); if(user==null) user=j;
-                String a=user.optString("auth_token",user.optString("auth","")), g=user.optString("ke","");
-                String u=user.optString("uid","");
-                if(a.isEmpty()&&!g.isEmpty()&&!u.isEmpty()){ui(request,()->{loginButton.setEnabled(true);status.setText("");promptFactor(g,u,request,loginButton,status);});return;}
-                if(a.isEmpty()||g.isEmpty()||u.isEmpty()) throw new IOException("Не удалось войти. Проверьте данные.");
-                auth=a;group=g;uid=u;ui(request,()->status.setText("Подключение камер…"));connectSocket();loadCameras(request);
-            } catch(Exception ex){closeSocket();auth=null;group=null;uid=null;ui(request,()->{loginButton.setEnabled(true);status.setText("");error(safeError(ex));});}});
-        });status.setTag(enter);l.addView(enter);l.addView(status);
-    }
+ private final ExecutorService io=Executors.newFixedThreadPool(4);
+ private final Handler handler=new Handler(Looper.getMainLooper());
+ private final List<MediaPlayer> players=new ArrayList<>();
+ private final List<ApiClient.Camera> cameras=new ArrayList<>();
+ private final Set<String> watched=ConcurrentHashMap.newKeySet();
+ private Socket socket; private volatile boolean socketReady; private volatile int generation;
+ private String server,auth,group,uid,pendingUser="",pendingPassword="";private boolean pendingRemember,dark,resumeConnection,started;
+ private LibVLC vlc;private ApiClient client;private CredentialsStore credentials;private MediaFiles media;private ArchiveViewer viewer;private VideoView recordingVideo;
+ private int bg,card,ink,muted,accent=Color.rgb(78,189,174);private LinearLayout root;private Runnable restorePage;private String pageName="login";private int tab;
+ @Override public void onCreate(Bundle state){super.onCreate(state);credentials=new CredentialsStore(this);media=new MediaFiles(this);vlc=new LibVLC(this,new ArrayList<>(Arrays.asList("--network-caching=600","--drop-late-frames","--quiet")));palette();showLogin();}
+ private void palette(){String theme=getPreferences(0).getString("theme","dark");dark=theme.equals("dark")||(theme.equals("system")&&(getResources().getConfiguration().uiMode&android.content.res.Configuration.UI_MODE_NIGHT_MASK)==android.content.res.Configuration.UI_MODE_NIGHT_YES);bg=Color.parseColor(dark?"#0D1721":"#F1F5F7");card=Color.parseColor(dark?"#192A38":"#FFFFFF");ink=Color.parseColor(dark?"#ECF4F8":"#152E3B");muted=Color.parseColor(dark?"#93AAB8":"#607783");getWindow().setStatusBarColor(bg);getWindow().setNavigationBarColor(bg);getWindow().getDecorView().setSystemUiVisibility(dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);}
+ private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
+ private GradientDrawable shape(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
+ private LinearLayout col(){LinearLayout l=new LinearLayout(this);l.setOrientation(1);return l;}
+ private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setGravity(Gravity.CENTER_VERTICAL);return l;}
+ private LinearLayout.LayoutParams weight(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(46),1);p.setMargins(dp(3),dp(3),dp(3),dp(3));return p;}
+ private TextView text(String s,int size){TextView t=new TextView(this);t.setText(s);t.setTextColor(ink);t.setTextSize(size);return t;}
+ private TextView note(String s){TextView t=text(s,13);t.setTextColor(muted);return t;}
+ private Button button(String s,Runnable action){Button b=new Button(this);b.setText(s);b.setAllCaps(false);b.setTextColor(ink);b.setTextSize(13);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(12),dp(4),dp(12),dp(4));b.setBackground(shape(card,14));b.setOnClickListener(v->action.run());return b;}
+ private EditText field(String hint,String value,int type){EditText e=new EditText(this);e.setSingleLine(true);e.setHint(hint);e.setText(value);e.setInputType(type);e.setTextColor(ink);e.setHintTextColor(muted);e.setPadding(dp(16),dp(12),dp(16),dp(12));e.setBackground(shape(card,14));return e;}
+ private void fieldAdd(LinearLayout l,View v){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(56));p.setMargins(0,dp(6),0,dp(6));l.addView(v,p);}
+ private void error(String message){if(!isFinishing())new AlertDialog.Builder(this).setMessage(message).setPositiveButton("Понятно",null).show();}
+ private LinearLayout screen(String name,Runnable restore,boolean full){generation++;releasePlayers();unwatchAll();if(viewer!=null){viewer.destroy();viewer=null;}pageName=name;restorePage=restore;setRequestedOrientation(full?ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);getWindow().getDecorView().setSystemUiVisibility(full?View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY:(dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR));if(name.equals("login"))getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);else getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);root=col();root.setBackgroundColor(bg);root.setPadding(dp(full?8:16),dp(8),dp(full?8:16),dp(8));setContentView(root);return root;}
+ private void showLogin(){palette();LinearLayout page=screen("login",this::showLogin,false);ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);LinearLayout form=col();scroll.addView(form);page.addView(scroll,new LinearLayout.LayoutParams(-1,-1));ImageView hero=new ImageView(this);hero.setImageResource(R.drawable.login_hero);hero.setScaleType(ImageView.ScaleType.FIT_CENTER);hero.setBackground(shape(card,24));hero.setClipToOutline(true);form.addView(hero,new LinearLayout.LayoutParams(-1,dp(215)));TextView brand=text("ДОМ ПОД ПРИСМОТРОМ",11);brand.setLetterSpacing(.18f);brand.setTextColor(accent);brand.setPadding(0,dp(20),0,dp(8));form.addView(brand);TextView title=text("Рядом, где бы вы ни были",27);title.setTypeface(null,1);form.addView(title);form.addView(note("Камеры и архив вашего дома"));
+ String savedServer=getPreferences(0).getString("server","https://cam.lex42.ru");CredentialsStore.Credential saved=credentials.load(savedServer);EditText url=field("Адрес сервера",savedServer,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI),mail=field("Электронная почта",saved==null?"":saved.username,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS),pass=field("Пароль",saved==null?"":saved.password,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);url.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){pass.setText("");}public void afterTextChanged(android.text.Editable e){}});fieldAdd(form,mail);fieldAdd(form,pass);CheckBox remember=new CheckBox(this);remember.setText("Запомнить вход");remember.setTextColor(ink);remember.setChecked(saved!=null);form.addView(remember);TextView status=note("");Button enter=button("Войти",()->{String address=url.getText().toString().trim(),username=mail.getText().toString().trim(),password=pass.getText().toString();if(username.isEmpty()||password.isEmpty()){error("Введите почту и пароль");return;}try{new ApiClient(address,"","","");}catch(Exception e){error("Проверьте адрес сервера");return;}server=address.replaceAll("/+$","");pendingUser=username;pendingPassword=password;pendingRemember=remember.isChecked();if(!pendingRemember)credentials.clear();getPreferences(0).edit().putString("server",server).apply();int request=++generation;Button login=(Button)status.getTag();login.setEnabled(false);status.setText("Входим в ваш дом…");io.execute(()->{try{JSONObject j=new JSONObject(request("POST",server+"/?json=true","mail="+enc(username)+"&pass="+enc(password)+"&function=dash&machineID="+enc(machineId())));JSONObject u=j.optJSONObject("$user");if(u==null)u=j;String a=u.optString("auth_token",u.optString("auth","")),g=u.optString("ke"),id=u.optString("uid");if(a.isEmpty()&&!g.isEmpty()&&!id.isEmpty()){ui(request,()->{login.setEnabled(true);promptFactor(g,id,request,login,status);});return;}if(a.isEmpty()||g.isEmpty()||id.isEmpty())throw new IOException("Не удалось войти. Проверьте почту и пароль.");if(request!=generation)return;auth=a;group=g;uid=id;connectSocket();if(request!=generation)return;loadCameras(request);}catch(Exception e){if(request!=generation)return;closeSocket();auth=null;ui(request,()->{login.setEnabled(true);status.setText("");error(safeError(e));});}});});enter.setBackground(shape(accent,14));enter.setTextColor(Color.rgb(10,35,39));status.setTag(enter);fieldAdd(form,enter);form.addView(status);Button advanced=button("Настройки подключения ▾",()->url.setVisibility(url.getVisibility()==View.GONE?View.VISIBLE:View.GONE));form.addView(advanced);fieldAdd(form,url);url.setVisibility(View.GONE);form.addView(button(dark?"☀ Светлая тема":"☾ Тёмная тема",()->{getPreferences(0).edit().putString("theme",dark?"light":"dark").apply();showLogin();}));}
     private String machineId(){String s=getPreferences(MODE_PRIVATE).getString("machine_id","");if(s.isEmpty()){s=UUID.randomUUID().toString();getPreferences(MODE_PRIVATE).edit().putString("machine_id",s).apply();}return s;}
     private void promptFactor(String ke,String userId,int requestId,Button loginButton,TextView status){
         EditText code=field("Код подтверждения","",InputType.TYPE_CLASS_NUMBER);
         new AlertDialog.Builder(this).setTitle("Подтверждение входа").setView(code).setNegativeButton("Отмена",null).setPositiveButton("Войти",(dialog,which)->{
-            String value=code.getText().toString().trim();loginButton.setEnabled(false);status.setText("Подтверждение входа…");io.execute(()->{try{String data="ke="+enc(ke)+"&id="+enc(userId)+"&machineID="+enc(machineId())+"&factorAuthKey="+enc(value)+"&function=dash";JSONObject j=new JSONObject(request("POST",server+"/?json=true",data));JSONObject u=j.optJSONObject("$user");if(u==null)u=j;String a=u.optString("auth_token","");if(a.isEmpty())throw new IOException("Не удалось подтвердить вход.");auth=a;group=u.optString("ke",ke);uid=u.optString("uid",userId);ui(requestId,()->status.setText("Подключение камер…"));connectSocket();loadCameras(requestId);}catch(Exception e){closeSocket();auth=null;group=null;uid=null;ui(requestId,()->{loginButton.setEnabled(true);status.setText("");error(safeError(e));});}});
+            String value=code.getText().toString().trim();loginButton.setEnabled(false);status.setText("Подтверждение входа…");io.execute(()->{try{String data="ke="+enc(ke)+"&id="+enc(userId)+"&machineID="+enc(machineId())+"&factorAuthKey="+enc(value)+"&function=dash";JSONObject j=new JSONObject(request("POST",server+"/?json=true",data));JSONObject u=j.optJSONObject("$user");if(u==null)u=j;String a=u.optString("auth_token","");if(a.isEmpty())throw new IOException("Не удалось подтвердить вход.");if(requestId!=generation)return;auth=a;group=u.optString("ke",ke);uid=u.optString("uid",userId);ui(requestId,()->status.setText("Подключение камер…"));connectSocket();loadCameras(requestId);}catch(Exception e){if(requestId!=generation)return;closeSocket();auth=null;group=null;uid=null;ui(requestId,()->{loginButton.setEnabled(true);status.setText("");error(safeError(e));});}});
         }).show();
     }
     private void connectSocket() throws Exception {
         closeSocket();CountDownLatch ready=new CountDownLatch(1);IO.Options options=IO.Options.builder().setPath("/socket.io").setTransports(new String[]{"websocket"}).build();Socket s=IO.socket(server,options);socket=s;
         s.on(Socket.EVENT_CONNECT,args->{try{s.emit("f",new JSONObject().put("f","init").put("ke",group).put("uid",uid).put("auth",auth));}catch(JSONException ignored){}});
-        s.on("f",args->{if(args.length>0&&args[0] instanceof JSONObject&&"init_success".equals(((JSONObject)args[0]).optString("f"))){socketReady=true;ready.countDown();}});
-        s.on(Socket.EVENT_DISCONNECT,args->{socketReady=false;watched.clear();});s.connect();
+        s.on("f",args->{if(args.length>0&&args[0] instanceof JSONObject&&"init_success".equals(((JSONObject)args[0]).optString("f"))){boolean again=ready.getCount()==0;socketReady=true;ready.countDown();if(again)runOnUiThread(()->{if(socket==s&&started&&restorePage!=null&&("camera".equals(pageName)||("home".equals(pageName)&&tab==0)))restorePage.run();});}});
+        s.on(Socket.EVENT_DISCONNECT,args->{if(socket==s){socketReady=false;watched.clear();runOnUiThread(()->{if(started&&auth!=null)Toast.makeText(this,"Связь потеряна · переподключаемся",Toast.LENGTH_SHORT).show();});}});s.connect();
         if(!ready.await(12,TimeUnit.SECONDS)){closeSocket();throw new IOException("Не удалось подключить просмотр камер.");}
     }
     private void watch(String id) throws Exception {
@@ -127,79 +85,33 @@ public final class MainActivity extends Activity {
     private String api(String path) {return server+"/"+Uri.encode(auth)+"/"+path;}
     private static String safeError(Exception e) { return e instanceof IOException && e.getMessage()!=null && (e.getMessage().startsWith("Сервер ответил")||e.getMessage().startsWith("Не удалось")) ? e.getMessage() : "Не удалось связаться с Shinobi или обработать ответ."; }
     private void ui(int request,Runnable r){runOnUiThread(()->{if(request==generation&&!isFinishing())r.run();});}
-    private static JSONObject jsonObject(Object o){try {if(o instanceof JSONObject)return (JSONObject)o;if(o instanceof String)return new JSONObject((String)o);}catch(Exception ignored){}return new JSONObject();}
-    private static JSONArray jsonArray(Object o){try {if(o instanceof JSONArray)return (JSONArray)o;if(o instanceof String&&!((String)o).isEmpty())return new JSONArray((String)o);}catch(Exception ignored){}return new JSONArray();}
-    private static String channel(String s){Matcher m=Pattern.compile("(?i)channels/(\\d+)").matcher(s);return m.find()?m.group(1):"";}
-    private Camera parseCamera(JSONObject j) {
-        Camera c=new Camera();c.id=j.optString("mid");c.name=j.optString("name",c.id);JSONObject d=jsonObject(j.opt("details"));c.mainType=d.optString("stream_type");JSONObject sub=jsonObject(d.opt("substream"));JSONObject input=jsonObject(sub.opt("input")),output=jsonObject(sub.opt("output"));c.subType=output.optString("stream_type");c.dynamicAvailable=!c.subType.isEmpty();
-        JSONArray channels=jsonArray(d.opt("stream_channels"));c.dynamicChannel=channels.length()+1;
-        String primary=j.optString("path","");JSONObject choices=jsonObject(d.opt("input_map_choices"));JSONArray map=jsonArray(choices.opt("stream"));String idx=map.optJSONObject(0)==null?"0":map.optJSONObject(0).optString("map","0");
-        if(idx.startsWith("1")){JSONArray inputs=jsonArray(d.opt("input_maps"));JSONObject first=inputs.optJSONObject(0);if(first!=null)primary=first.optString("fulladdress","");}
-        String mainCh=channel(primary),subCh=channel(input.optString("fulladdress",""));
-        c.primaryIsLow="102".equals(mainCh) || (!"101".equals(mainCh) && "101".equals(subCh));
-        return c;
-    }
-    private void loadCameras(int request) throws Exception {
-        Object parsed=new JSONTokener(request("GET",api("monitor/"+Uri.encode(group)),null)).nextValue();if(!(parsed instanceof JSONArray))throw new IOException("Не удалось получить список камер.");
-        JSONArray a=(JSONArray)parsed;ArrayList<Camera> found=new ArrayList<>();for(int i=0;i<a.length();i++){JSONObject j=a.optJSONObject(i);if(j!=null){Camera c=parseCamera(j);if(!c.id.isEmpty())found.add(c);}}
-        ui(request,()->{cameras.clear();cameras.addAll(found);showGrid();});
-    }
-    private void showGrid(){
-        int current=++generation;LinearLayout page=layout();screen(page);LinearLayout bar=new LinearLayout(this);bar.addView(text("Камеры",24),new LinearLayout.LayoutParams(0,-2,1));bar.addView(button("Обновить",()->{int g=++generation;io.execute(()->{try{loadCameras(g);}catch(Exception e){ui(g,()->error(safeError(e)));}});}));bar.addView(button("Выход",()->{closeSocket();auth=null;group=null;uid=null;showLogin();}));page.addView(bar);
-        ScrollView scroll=new ScrollView(this);LinearLayout rows=layout();rows.setPadding(0,0,0,0);scroll.addView(rows);page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        if(cameras.isEmpty())rows.addView(text("Камеры не найдены",18));
-        for(int i=0;i<cameras.size();i+=2){LinearLayout row=new LinearLayout(this);rows.addView(row);for(int k=i;k<Math.min(i+2,cameras.size());k++){Camera c=cameras.get(k);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackgroundColor(CARD);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.setMargins(dp(3),dp(3),dp(3),dp(3));row.addView(tile,lp);VLCVideoLayout v=new VLCVideoLayout(this);tile.addView(v,new LinearLayout.LayoutParams(-1,dp(115)));TextView label=text(c.name,15);label.setPadding(dp(8),dp(6),dp(8),dp(6));tile.addView(label);tile.setOnClickListener(w->showCamera(c,false));loadStream(c,false,v,current);}}
-    }
-    private String mainUrl(Camera c) {String ext="hls".equals(c.mainType)?"s.m3u8":"s.mp4";return api(c.mainType+"/"+Uri.encode(group)+"/"+Uri.encode(c.id)+"/"+ext);}
-    private String subUrl(Camera c) {String ext="hls".equals(c.subType)?"s.m3u8":"s.mp4";return api(c.subType+"/"+Uri.encode(group)+"/"+Uri.encode(c.id)+"/"+c.dynamicChannel+"/"+ext);}
-    private void loadStream(Camera c,boolean high,VLCVideoLayout view,int current){
-        io.execute(()->{try {if(current!=generation)return;watch(c.id);boolean useSub=c.dynamicAvailable&&(high==c.primaryIsLow);
-            if(useSub){JSONArray a=new JSONArray(request("GET",api("monitor/"+Uri.encode(group)),null));JSONObject m=null;for(int i=0;i<a.length();i++){JSONObject x=a.optJSONObject(i);if(x!=null&&c.id.equals(x.optString("mid"))){m=x;break;}}
-                if(m==null)throw new IOException("Не удалось найти камеру.");if(current!=generation)return;if(!m.optBoolean("subStreamActive",false)){JSONObject result=new JSONObject(request("GET",api("toggleSubstream/"+Uri.encode(group)+"/"+Uri.encode(c.id)),null));if(!result.optBoolean("ok",false))throw new IOException("Не удалось включить поток.");Thread.sleep(1300);}}
-            String url=useSub?subUrl(c):mainUrl(c);ui(current,()->attach(view,url));
-        }catch(Exception e){ui(current,()->Toast.makeText(this,"Поток «"+c.name+"» недоступен",Toast.LENGTH_SHORT).show());}});
-    }
-    private void attach(VLCVideoLayout view,String url){attach(view,url,null,0,null,0);}
-    private void attach(VLCVideoLayout view,String url,Boolean hardware,long startTime,TextView status,int requestId){
-        LibVLC engine=vlc;
-        if(hardware!=null){if(archiveVlc==null)archiveVlc=new LibVLC(this,new ArrayList<>(Arrays.asList("--network-caching=3000","--quiet")));engine=archiveVlc;}
-        MediaPlayer p=new MediaPlayer(engine);players.add(p);p.attachViews(view,null,false,false);
-        int[] attempts={0};boolean[] seekPending={startTime>0};Handler handler=new Handler(Looper.getMainLooper());
-        p.setEventListener(event->{
-            if(event.type==MediaPlayer.Event.Playing){if(seekPending[0]){seekPending[0]=false;p.setTime(startTime);}if(status!=null)ui(requestId,()->status.setText("Воспроизведение"));}
-            else if(event.type==MediaPlayer.Event.Buffering&&status!=null){int percent=Math.round(event.getBuffering());ui(requestId,()->status.setText(percent<100?"Буферизация: "+percent+"%":"Воспроизведение"));}
-            else if(event.type==MediaPlayer.Event.Paused&&status!=null)ui(requestId,()->status.setText("Пауза"));
-            else if(event.type==MediaPlayer.Event.EncounteredError){if(status!=null)ui(requestId,()->status.setText("Ошибка воспроизведения"));handler.postDelayed(()->{if(!players.contains(p))return;if(attempts[0]++<3){p.stop();p.play();}else Toast.makeText(this,"Не удалось воспроизвести видео",Toast.LENGTH_SHORT).show();},2000);}
-        });
-        Media m=new Media(engine,Uri.parse(url));if(hardware!=null){m.addOption(":network-caching=3000");m.setHWDecoderEnabled(hardware,false);}p.setMedia(m);m.release();p.setVolume(0);p.play();
-    }
-    private void showCamera(Camera c,boolean high){int g=++generation;LinearLayout page=layout();screen(page);LinearLayout bar=new LinearLayout(this);bar.addView(button("← Камеры",this::showGrid));bar.addView(text(c.name,21),new LinearLayout.LayoutParams(0,-2,1));page.addView(bar);VLCVideoLayout video=new VLCVideoLayout(this);page.addView(video,new LinearLayout.LayoutParams(-1,0,1));LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER);actions.addView(button(high?"Обычное качество":"Полное качество",()->showCamera(c,!high)));actions.addView(button("Архив",()->showArchive(c)));page.addView(actions);loadStream(c,high,video,g);}
-    private void showArchive(Camera c){int g=++generation;LinearLayout page=layout();screen(page);page.addView(button("← Камера",()->showCamera(c,false)));page.addView(text("Архив · "+c.name,22));ScrollView sv=new ScrollView(this);LinearLayout list=layout();sv.addView(list);page.addView(sv,new LinearLayout.LayoutParams(-1,0,1));TextView status=text("Загрузка…",16);list.addView(status);
-        io.execute(()->{try{JSONObject result=new JSONObject(request("GET",api("videos/"+Uri.encode(group)+"/"+Uri.encode(c.id)+"?limit=100"),null));if(!result.optBoolean("ok",true))throw new IOException("Не удалось получить архив.");JSONArray videos=result.optJSONArray("videos");if(videos==null)throw new IOException("Не удалось получить архив.");ui(g,()->{list.removeAllViews();if(videos.length()==0)list.addView(text("Записей нет",16));for(int i=0;i<videos.length();i++){JSONObject v=videos.optJSONObject(i);if(v==null)continue;String href=v.optString("href","");String time=v.optString("time","Запись");if(href.isEmpty())continue;try{URL base=new URL(server+"/");URL resolved=new URL(base,href);if(!resolved.getHost().equalsIgnoreCase(base.getHost())||resolved.getPort()!=base.getPort()||!resolved.getProtocol().equals(base.getProtocol()))continue;String play=resolved.toString();list.addView(button(time,()->showRecording(c,time,play)));}catch(Exception ignored){}}});}catch(Exception e){ui(g,()->status.setText("Не удалось загрузить архив"));}});
-    }
-    private void showRecording(Camera c,String title,String url){showRecording(c,title,url,0,0);}
-    private void showRecording(Camera c,String title,String url,int mode,long startTime){
-        int g=++generation;LinearLayout page=layout();screen(page);page.addView(button("← Архив",()->showArchive(c)));page.addView(text(title,16));
-        TextView status=text("Загрузка…",14),progress=text("00:00",14);
-        if(mode==0){
-            VideoView video=new VideoView(this);recordingVideo=video;page.addView(video,new LinearLayout.LayoutParams(-1,0,1));
-            video.setOnPreparedListener(mp->{if(g!=generation)return;mp.setVolume(0,0);if(startTime>0)video.seekTo((int)Math.min(Integer.MAX_VALUE,startTime));video.start();status.setText("Воспроизведение");});
-            video.setOnInfoListener((mp,what,extra)->{if(g!=generation)return false;if(what==android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START)status.setText("Буферизация…");else if(what==android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END)status.setText("Воспроизведение");return false;});
-            video.setOnErrorListener((mp,what,extra)->{if(g==generation)status.setText("Не удалось воспроизвести запись. Попробуйте другой режим.");return true;});
-            video.setOnCompletionListener(mp->{if(g==generation)status.setText("Запись закончилась");});video.setVideoURI(Uri.parse(url));
-        }else{
-            VLCVideoLayout video=new VLCVideoLayout(this);page.addView(video,new LinearLayout.LayoutParams(-1,0,1));attach(video,url,mode==2,startTime,status,g);
-        }
-        LinearLayout info=new LinearLayout(this);info.addView(status,new LinearLayout.LayoutParams(0,-2,1));info.addView(progress);page.addView(info);
-        LinearLayout controls=new LinearLayout(this);controls.addView(button("−10 с",()->seek(-10000)));controls.addView(button("Пауза / пуск",()->{if(recordingVideo!=null){if(recordingVideo.isPlaying()){recordingVideo.pause();status.setText("Пауза");}else recordingVideo.start();}else if(!players.isEmpty()){MediaPlayer p=players.get(0);if(p.isPlaying())p.pause();else p.play();}}));controls.addView(button("+10 с",()->seek(10000)));page.addView(controls);
-        String[] modeNames={"системный","совместимый VLC","аппаратный VLC"};page.addView(button("Режим видео: "+modeNames[mode],()->showRecording(c,title,url,(mode+1)%modeNames.length,recordingPosition())));
-        Handler timer=new Handler(Looper.getMainLooper());Runnable refresh=new Runnable(){public void run(){if(g!=generation||isFinishing())return;long sec=recordingPosition()/1000;progress.setText(String.format(java.util.Locale.ROOT,"%02d:%02d",sec/60,sec%60));timer.postDelayed(this,1000);}};timer.post(refresh);
-    }
-    private long recordingPosition(){if(recordingVideo!=null)return Math.max(0,recordingVideo.getCurrentPosition());return players.isEmpty()?0:Math.max(0,players.get(0).getTime());}
-    private void seek(long delta){if(recordingVideo!=null)recordingVideo.seekTo((int)Math.min(Integer.MAX_VALUE,Math.max(0,recordingPosition()+delta)));else if(!players.isEmpty()){MediaPlayer p=players.get(0);p.setTime(Math.max(0,p.getTime()+delta));}}
-    private void releasePlayers(){if(recordingVideo!=null){recordingVideo.stopPlayback();recordingVideo=null;}for(MediaPlayer p:players){try{p.stop();p.detachViews();p.release();}catch(Exception ignored){}}players.clear();}
-    @Override public void onBackPressed(){if(auth!=null)showGrid();else super.onBackPressed();}
-    @Override protected void onStop(){super.onStop();if(auth!=null){generation++;releasePlayers();closeSocket();resumeConnection=true;}}
-    @Override protected void onStart(){super.onStart();if(resumeConnection&&auth!=null){resumeConnection=false;int g=++generation;io.execute(()->{try{connectSocket();loadCameras(g);}catch(Exception e){ui(g,()->{showLogin();error("Сессия завершена. Войдите снова.");});}});}}
-    @Override protected void onDestroy(){generation++;releasePlayers();closeSocket();io.shutdownNow();if(archiveVlc!=null)archiveVlc.release();vlc.release();super.onDestroy();}
+ private void loadCameras(int requestId)throws Exception{if(requestId!=generation)return;ApiClient apiClient=new ApiClient(server,auth,group,uid);List<ApiClient.Camera> found=apiClient.getCameras();if(requestId!=generation)return;boolean saveFailed=false;if(pendingRemember&&!pendingPassword.isEmpty())try{credentials.save(server,pendingUser,pendingPassword);}catch(Exception e){saveFailed=true;}pendingPassword="";boolean failed=saveFailed;ui(requestId,()->{client=apiClient;cameras.clear();cameras.addAll(found);restoreOrder();showHome(0);if(failed)error("Вход выполнен, но сохранить пароль не удалось.");});}
+ private String orderKey(){return "camera_order_"+server+"_"+group+"_"+uid;}
+ private void restoreOrder(){try{JSONArray a=new JSONArray(getPreferences(0).getString(orderKey(),"[]"));Map<String,Integer> order=new HashMap<>();for(int i=0;i<a.length();i++)order.put(a.getString(i),i);Collections.sort(cameras,(x,y)->Integer.compare(order.getOrDefault(x.id,Integer.MAX_VALUE),order.getOrDefault(y.id,Integer.MAX_VALUE)));}catch(Exception ignored){}}
+ private void saveOrder(){JSONArray order=new JSONArray();for(ApiClient.Camera c:cameras)order.put(c.id);getPreferences(0).edit().putString(orderKey(),order.toString()).apply();}
+ private void showHome(int selectedTab){tab=selectedTab;LinearLayout page=screen("home",()->showHome(selectedTab),false);LinearLayout top=row();LinearLayout titles=col();TextView title=text("Мой дом",28);title.setTypeface(null,1);titles.addView(title);titles.addView(note(cameras.size()+" камер · личное пространство"));top.addView(titles,new LinearLayout.LayoutParams(0,-2,1));top.addView(button("⚙",this::settings),new LinearLayout.LayoutParams(dp(48),dp(48)));page.addView(top);FrameLayout content=new FrameLayout(this);page.addView(content,new LinearLayout.LayoutParams(-1,0,1));LinearLayout nav=row();Button liveTab=button("◉  Камеры",()->showHome(0)),archiveTab=button("◷  Просмотрщик",()->showHome(1));(selectedTab==0?liveTab:archiveTab).setTextColor(accent);nav.addView(liveTab,weight());nav.addView(archiveTab,weight());page.addView(nav);
+ if(selectedTab==1){viewer=new ArchiveViewer(this,client,cameras,dark,new ArchiveViewer.Listener(){public void onDownload(ApiClient.Recording r,boolean high,boolean share){export(r,high,share);}public void onFocus(ApiClient.Camera camera,long at){showArchiveAt(camera,at);}});content.addView(viewer,new FrameLayout.LayoutParams(-1,-1));return;}
+ if(cameras.isEmpty()){TextView empty=text("Нет доступных камер\nОбратитесь к администратору",18);empty.setGravity(Gravity.CENTER);content.addView(empty,new FrameLayout.LayoutParams(-1,-1));return;}
+ ScrollView scroll=new ScrollView(this);LinearLayout grid=col();scroll.addView(grid);content.addView(scroll);TextView tip=note("Двойное касание — весь экран · удержание — порядок");tip.setPadding(0,dp(12),0,dp(10));grid.addView(tip);final int requestId=generation;
+ for(int i=0;i<cameras.size();i+=2){LinearLayout line=row();grid.addView(line);for(int k=i;k<Math.min(i+2,cameras.size());k++){ApiClient.Camera camera=cameras.get(k);LinearLayout tile=col();tile.setBackground(shape(card,16));tile.setClipToOutline(true);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.setMargins(dp(3),dp(3),dp(3),dp(3));line.addView(tile,lp);FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);VLCVideoLayout video=new VLCVideoLayout(this);stage.addView(video,new FrameLayout.LayoutParams(-1,-1));tile.addView(stage,new LinearLayout.LayoutParams(-1,dp(106)));TextView label=text(camera.name,13);label.setPadding(dp(10),dp(7),dp(8),0);tile.addView(label);TextView state=note("Подключение…");state.setPadding(dp(10),0,dp(8),dp(8));tile.addView(state);Runnable drag=()->tile.startDragAndDrop(ClipData.newPlainText("camera",camera.id),new View.DragShadowBuilder(tile),camera.id,0);stage.addView(new ZoomGestureOverlay(this,video,()->showCamera(camera,false),drag),new FrameLayout.LayoutParams(-1,-1));label.setOnLongClickListener(v->{drag.run();return true;});tile.setOnDragListener((v,event)->{if(event.getAction()==DragEvent.ACTION_DRAG_STARTED)return event.getLocalState() instanceof String;if(event.getAction()==DragEvent.ACTION_DRAG_ENTERED){tile.setAlpha(.55f);return true;}if(event.getAction()==DragEvent.ACTION_DRAG_EXITED||event.getAction()==DragEvent.ACTION_DRAG_ENDED){tile.setAlpha(1);return true;}if(event.getAction()==DragEvent.ACTION_DROP){String id=(String)event.getLocalState();int from=-1,to=cameras.indexOf(camera);for(int n=0;n<cameras.size();n++)if(cameras.get(n).id.equals(id))from=n;if(from>=0&&from!=to){ApiClient.Camera moved=cameras.remove(from);cameras.add(to,moved);saveOrder();showHome(0);}return true;}return true;});loadStream(camera,false,video,state,requestId);}}
+ }
+ private void settings(){String[] items={"Тема оформления","Обновить камеры","Забыть сохранённый пароль","Выйти из аккаунта"};new AlertDialog.Builder(this).setTitle("Настройки").setItems(items,(d,n)->{if(n==0){new AlertDialog.Builder(this).setTitle("Тема оформления").setItems(new String[]{"Как в телефоне","Светлая","Тёмная"},(dialog,index)->{getPreferences(0).edit().putString("theme",new String[]{"system","light","dark"}[index]).apply();palette();showHome(tab);}).show();}else if(n==1){int id=++generation;io.execute(()->{try{loadCameras(id);}catch(Exception e){ui(id,()->error(safeError(e)));}});}else if(n==2){credentials.clear();Toast.makeText(this,"Сохранённый пароль удалён",Toast.LENGTH_SHORT).show();}else{credentials.clear();closeSocket();auth=null;group=null;uid=null;cameras.clear();client=null;showLogin();}}).show();}
+ private void loadStream(ApiClient.Camera camera,boolean high,VLCVideoLayout view,TextView state,int requestId){io.execute(()->{try{if(requestId!=generation)return;watch(camera.id);if(requestId!=generation)return;if(client.requiresDynamic(camera,high))client.ensureDynamic(camera);String url=client.liveUrl(camera,high);ui(requestId,()->attach(view,url,state,requestId));}catch(Exception e){ui(requestId,()->{state.setText("Нет связи · нажмите для повтора");state.setTextColor(Color.rgb(232,139,114));state.setOnClickListener(v->{state.setText("Подключение…");loadStream(camera,high,view,state,requestId);});});}});}
+ private void attach(VLCVideoLayout view,String url,TextView state,int requestId){MediaPlayer player=new MediaPlayer(vlc);players.add(player);player.attachViews(view,null,false,true);int[] attempts={0};player.setEventListener(event->{if(event.type==MediaPlayer.Event.Playing)ui(requestId,()->{state.setText("● В эфире");state.setTextColor(accent);});else if(event.type==MediaPlayer.Event.Buffering)ui(requestId,()->state.setText(event.getBuffering()<100?"Буферизация…":"● В эфире"));else if(event.type==MediaPlayer.Event.EncounteredError){ui(requestId,()->state.setText("Потеря связи · переподключение…"));handler.postDelayed(()->{if(requestId!=generation||!players.contains(player)||!started)return;if(attempts[0]++<3){player.stop();player.play();}else{state.setText("Нет связи · нажмите для повтора");state.setOnClickListener(v->{attempts[0]=0;state.setText("Подключение…");player.stop();player.play();});}},2000);}});Media source=new Media(vlc,Uri.parse(url));player.setMedia(source);source.release();player.setVolume(0);if(started)player.play();}
+ private void showCamera(ApiClient.Camera camera,boolean high){LinearLayout page=screen("camera",()->showCamera(camera,high),true);int requestId=generation;LinearLayout top=row();top.addView(button("‹",()->showHome(0)),new LinearLayout.LayoutParams(dp(48),dp(42)));TextView name=text(camera.name,20);top.addView(name,new LinearLayout.LayoutParams(0,-2,1));TextView state=note("Подключение…");top.addView(state);page.addView(top);FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);VLCVideoLayout video=new VLCVideoLayout(this);stage.addView(video,new FrameLayout.LayoutParams(-1,-1));stage.addView(new ZoomGestureOverlay(this,video,()->showHome(0),null),new FrameLayout.LayoutParams(-1,-1));page.addView(stage,new LinearLayout.LayoutParams(-1,0,1));LinearLayout controls=row();controls.addView(button(high?"4К • → SD":"SD • → 4К",()->showCamera(camera,!high)),weight());controls.addView(button("Снимок",()->snapshot(video,camera.name)),weight());controls.addView(button("Архив",()->showArchive(camera,0)),weight());page.addView(controls);loadStream(camera,high,video,state,requestId);}
+ private TextureView texture(View v){if(v instanceof TextureView)return (TextureView)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){TextureView found=texture(g.getChildAt(i));if(found!=null)return found;}}return null;}
+ private void snapshot(View video,String name){try{TextureView texture=texture(video);if(texture==null||!texture.isAvailable())throw new IOException();Bitmap bitmap=texture.getBitmap();if(bitmap==null)throw new IOException();media.screenshot(bitmap,name+"_"+new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss",Locale.ROOT).format(new Date()));bitmap.recycle();}catch(Exception e){error("Дождитесь изображения и повторите снимок.");}}
+ private String dateLabel(long ms){return new SimpleDateFormat("dd MMM · HH:mm:ss",new Locale("ru")).format(new Date(ms));}
+ private void showArchive(ApiClient.Camera camera,long day){LinearLayout page=screen("archive",()->showArchive(camera,day),false);LinearLayout bar=row();bar.addView(button("‹",()->showCamera(camera,false)),new LinearLayout.LayoutParams(dp(48),dp(46)));TextView title=text(camera.name,22);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));bar.addView(button("Дата",()->{Calendar c=Calendar.getInstance();if(day>0)c.setTimeInMillis(day);new DatePickerDialog(this,(v,y,m,d)->{Calendar chosen=Calendar.getInstance();chosen.set(y,m,d,0,0,0);chosen.set(Calendar.MILLISECOND,0);showArchive(camera,chosen.getTimeInMillis());},c.get(Calendar.YEAR),c.get(Calendar.MONTH),c.get(Calendar.DAY_OF_MONTH)).show();}));page.addView(bar);page.addView(note(day==0?"Архив · последние записи":"Архив · "+new SimpleDateFormat("dd MMMM yyyy",new Locale("ru")).format(new Date(day))));ScrollView scroll=new ScrollView(this);LinearLayout list=col();scroll.addView(list);page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));TextView status=note("Загружаем записи…");list.addView(status);int requestId=generation;io.execute(()->{try{long end=0;if(day>0){Calendar next=Calendar.getInstance();next.setTimeInMillis(day);next.add(Calendar.DAY_OF_MONTH,1);end=next.getTimeInMillis();}List<ApiClient.Recording> rows=client.recordings(camera.id,day,end);ui(requestId,()->{list.removeAllViews();if(rows.isEmpty())list.addView(note("За это время записей нет"));for(ApiClient.Recording r:rows){LinearLayout item=col();item.setPadding(dp(12),dp(10),dp(12),dp(10));item.setBackground(shape(card,16));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,dp(5),0,dp(5));list.addView(item,lp);TextView label=text(dateLabel(r.startMs),17);item.addView(label);item.addView(note(Math.max(1,(r.endMs-r.startMs)/1000)+" сек · SD / 4К"));LinearLayout actions=row();actions.addView(button("▶ Смотреть",()->showRecording(camera,r,false,0)),weight());actions.addView(button("↓ / Поделиться",()->exportMenu(r)),weight());item.addView(actions);}});}catch(Exception e){ui(requestId,()->{status.setText("Нет связи с архивом · нажмите для повтора");status.setOnClickListener(v->showArchive(camera,day));});}});}
+ private void showArchiveAt(ApiClient.Camera camera,long time){int requestId=++generation;io.execute(()->{try{List<ApiClient.Recording> records=client.recordings(camera.id,time-600000,time+600000);ApiClient.Recording row=ArchiveTimeline.at(records,time);ui(requestId,()->{if(row==null)error("В этот момент нет записи");else showRecording(camera,row,false,Math.max(0,time-row.startMs));});}catch(Exception e){ui(requestId,()->error("Не удалось открыть запись"));}});}
+ private void exportMenu(ApiClient.Recording r){String[] options={"Скачать SD","Скачать 4К","Отправить SD","Отправить 4К"};new AlertDialog.Builder(this).setTitle("Сохранить запись").setItems(options,(d,n)->export(r,n%2==1,n>=2)).show();}
+ private void export(ApiClient.Recording record,boolean high,boolean share){Toast.makeText(this,"Готовим "+(high?"4К":"SD")+"…",Toast.LENGTH_SHORT).show();ApiClient session=client;io.execute(()->{try{String url=high?record.url:session.variants(record).lowUrl;if(url==null||url.isEmpty())throw new IOException();runOnUiThread(()->{if(isFinishing())return;android.app.ProgressDialog progress=new android.app.ProgressDialog(this);progress.setTitle(share?"Подготовка к отправке":"Скачивание записи");progress.setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL);progress.setMax(100);progress.setCancelable(false);progress.setButton(android.app.ProgressDialog.BUTTON_NEGATIVE,"В фоне",(d,w)->{});progress.show();media.download(url,"Камера_"+record.cameraId+"_"+new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss",Locale.ROOT).format(new Date(record.startMs))+"_"+(high?"4K":"SD"),share,new MediaFiles.Progress(){public void onProgress(long done,long total){if(total>0){progress.setIndeterminate(false);progress.setProgress((int)(done*100/total));}else progress.setIndeterminate(true);}public void onComplete(Uri uri){progress.dismiss();Toast.makeText(MainActivity.this,"Сохранено в «Загрузки / Камеры»",Toast.LENGTH_LONG).show();}public void onError(String message){progress.dismiss();error(message);}});});}catch(Exception e){runOnUiThread(()->error(high?"Не удалось скачать запись":"Для этой записи SD недоступно. Выберите 4К."));}});}
+ private void showRecording(ApiClient.Camera camera,ApiClient.Recording record,boolean high,long start){LinearLayout page=screen("recording",()->showRecording(camera,record,high,recordingVideo==null?start:recordingVideo.getCurrentPosition()),false);int requestId=generation;LinearLayout bar=row();bar.addView(button("‹ Архив",()->showArchive(camera,0)));bar.addView(text(camera.name,19),new LinearLayout.LayoutParams(0,-2,1));page.addView(bar);page.addView(note(dateLabel(record.startMs)));FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.BLACK);VideoView video=new VideoView(this);recordingVideo=video;stage.addView(video,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));ZoomGestureOverlay overlay=new ZoomGestureOverlay(this,video,()->{boolean landscape=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE;setRequestedOrientation(landscape?ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);},null);stage.addView(overlay,new FrameLayout.LayoutParams(-1,-1));page.addView(stage,new LinearLayout.LayoutParams(-1,0,1));TextView status=note("Подготавливаем "+(high?"4К":"SD")+"…");page.addView(status);SeekBar seek=new SeekBar(this);seek.setMax((int)Math.min(Integer.MAX_VALUE,Math.max(1,record.endMs-record.startMs)));page.addView(seek);boolean[] dragging={false};seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar s,int value,boolean user){}public void onStartTrackingTouch(SeekBar s){dragging[0]=true;}public void onStopTrackingTouch(SeekBar s){video.seekTo(s.getProgress());dragging[0]=false;}});TextView elapsed=note("00:00");page.addView(elapsed);LinearLayout playback=row();playback.addView(button("−10 с",()->video.seekTo(Math.max(0,video.getCurrentPosition()-10000))),weight());Button pause=button("Ⅱ Пауза",()->{});pause.setOnClickListener(v->{if(video.isPlaying()){video.pause();pause.setText("▶ Пуск");status.setText("Пауза");}else{video.start();pause.setText("Ⅱ Пауза");}});playback.addView(pause,weight());playback.addView(button("+10 с",()->video.seekTo(Math.min(seek.getMax(),video.getCurrentPosition()+10000))),weight());page.addView(playback);LinearLayout tools=row();tools.addView(button(high?"4К → SD":"SD → 4К",()->showRecording(camera,record,!high,Math.max(0,video.getCurrentPosition()))),weight());tools.addView(button("Скачать",()->export(record,high,false)),weight());tools.addView(button("Отправить",()->export(record,high,true)),weight());page.addView(tools);
+ video.setOnPreparedListener(mp->{if(requestId!=generation)return;mp.setVolume(0,0);if(start>0)video.seekTo((int)Math.min(Integer.MAX_VALUE,start));if(started)video.start();status.setText("Воспроизведение · "+(high?"4К":"SD"));});video.setOnInfoListener((mp,what,extra)->{if(requestId!=generation)return false;if(what==android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START)status.setText("Буферизация…");if(what==android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END)status.setText("Воспроизведение · "+(high?"4К":"SD"));return false;});video.setOnErrorListener((mp,what,extra)->{if(requestId==generation){status.setText("Ошибка воспроизведения · нажмите для повтора");status.setOnClickListener(v->showRecording(camera,record,high,start));}return true;});video.setOnCompletionListener(mp->{status.setText("Запись закончилась");pause.setText("▶ Пуск");});io.execute(()->{try{String url=high?record.url:client.variants(record).lowUrl;if(url==null||url.isEmpty()){ui(requestId,()->status.setText("SD для этой записи отсутствует · переключитесь на 4К"));return;}ui(requestId,()->video.setVideoURI(Uri.parse(url)));}catch(Exception e){ui(requestId,()->{status.setText("Нет связи · нажмите для повтора");status.setOnClickListener(v->showRecording(camera,record,high,start));});}});Runnable ticker=new Runnable(){public void run(){if(requestId!=generation||isFinishing())return;int pos=Math.max(0,video.getCurrentPosition());if(!dragging[0])seek.setProgress(pos);elapsed.setText(String.format(Locale.ROOT,"%02d:%02d / %02d:%02d",pos/60000,pos/1000%60,seek.getMax()/60000,seek.getMax()/1000%60));handler.postDelayed(this,500);}};handler.post(ticker);
+ }
+ private void releasePlayers(){if(recordingVideo!=null){recordingVideo.stopPlayback();recordingVideo=null;}for(MediaPlayer p:players)try{p.stop();p.detachViews();p.release();}catch(Exception ignored){}players.clear();}
+ @Override public void onBackPressed(){if(auth==null){super.onBackPressed();return;}if(pageName.equals("home")&&tab==0){new AlertDialog.Builder(this).setMessage("Закрыть приложение?").setNegativeButton("Остаться",null).setPositiveButton("Закрыть",(d,w)->finish()).show();}else showHome(0);}
+ @Override protected void onStop(){started=false;super.onStop();if(viewer!=null)viewer.suspend();for(MediaPlayer p:players)try{p.pause();}catch(Exception ignored){}if(recordingVideo!=null)recordingVideo.pause();if(auth!=null)resumeConnection=true;}
+ @Override protected void onStart(){super.onStart();started=true;if(resumeConnection&&auth!=null){resumeConnection=false;if(viewer!=null)viewer.resume();for(MediaPlayer p:players)try{p.play();}catch(Exception ignored){}if(recordingVideo!=null)recordingVideo.start();if(!socketReady){int requestId=generation;io.execute(()->{try{connectSocket();ui(requestId,()->{if(restorePage!=null)restorePage.run();});}catch(Exception e){ui(requestId,()->error("Соединение потеряно. Откройте камеры повторно."));}});}}}
+ @Override protected void onDestroy(){generation++;handler.removeCallbacksAndMessages(null);if(viewer!=null)viewer.destroy();releasePlayers();closeSocket();io.shutdownNow();media.close();vlc.release();super.onDestroy();}
 }
