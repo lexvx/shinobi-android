@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:label="Камеры" android:icon="@drawable/ic_camera" android:theme="@android:style/Theme.Material.NoActionBar" android:usesCleartextTraffic="true" android:allowBackup="false">
+    <application android:label="Камеры дома №9" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.Material.NoActionBar" android:usesCleartextTraffic="true" android:allowBackup="false">
         <provider android:name=".SavedMediaProvider" android:authorities="${applicationId}.media" android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
             <intent-filter>

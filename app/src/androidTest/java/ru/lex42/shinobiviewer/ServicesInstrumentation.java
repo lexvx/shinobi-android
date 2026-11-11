@@ -25,6 +25,7 @@ public class ServicesInstrumentation extends Instrumentation {
             String disk=context.getSharedPreferences("encrypted_login",0).getString("record","");
             check(!disk.contains("test-secret-only")&&!disk.contains("test-user"),"encrypted persistence");
             store.clear();check(store.load("https://example.invalid")==null,"credential removal");
+            if(uiSmoke)context.getSharedPreferences("MainActivity",0).edit().putString("server","http://10.0.2.2:18765").commit();
             activity=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             MediaFiles media=new MediaFiles(activity);
             CountDownLatch latch=new CountDownLatch(1);AtomicReference<Uri> saved=new AtomicReference<>();AtomicReference<String> error=new AtomicReference<>();
@@ -56,13 +57,13 @@ public class ServicesInstrumentation extends Instrumentation {
     }
     private void checkUi(Activity a)throws Exception{
         capture(a,"login");
-        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();((android.widget.EditText)find(root,"Адрес сервера")).setText("http://10.0.2.2:18765");((android.widget.EditText)find(root,"Электронная почта")).setText("demo@example.test");((android.widget.EditText)find(root,"Пароль")).setText("demo");find(root,"Войти").performClick();});
+        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();((android.widget.EditText)find(root,"Электронная почта")).setText("demo@example.test");((android.widget.EditText)find(root,"Пароль")).setText("demo");find(root,"Войти").performClick();});
         long until=System.currentTimeMillis()+30000;AtomicBoolean home=new AtomicBoolean();
-        while(System.currentTimeMillis()<until&&!home.get()){runOnMainSync(()->home.set(find(a.getWindow().getDecorView(),"Мой дом")!=null));Thread.sleep(250);}
+        while(System.currentTimeMillis()<until&&!home.get()){runOnMainSync(()->home.set(find(a.getWindow().getDecorView(),"▦  Сетка")!=null));Thread.sleep(250);}
         check(home.get(),"mock login and camera list");capture(a,"cameras");
-        runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");find(a.getWindow().getDecorView(),"◷  Просмотрщик").performClick();});
+        runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");find(a.getWindow().getDecorView(),"◷\nПросмотрщик").performClick();});
         Thread.sleep(2000);capture(a,"viewer");
-        runOnMainSync(()->check(find(a.getWindow().getDecorView(),"Один момент · несколько камер")!=null,"viewer navigation"));
+        runOnMainSync(()->check(find(a.getWindow().getDecorView(),"Выберите камеры")!=null,"viewer navigation"));
     }
     private static void check(boolean ok,String label){if(!ok)throw new AssertionError(label);}
 }
