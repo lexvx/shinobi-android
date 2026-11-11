@@ -19,9 +19,9 @@ classpath="$json_jar:$android_jar"
 "$jdk_dir/bin/javac" -cp "$classpath" -d "$classes_dir" \
     "$sources_dir/ApiClient.java" "$sources_dir/ArchiveVariants.java" \
     "$sources_dir/ArchiveTimeline.java" "$sources_dir/MediaFiles.java" \
-    "$sources_dir/CredentialsStore.java" \
-    "$project_dir/tests/ApiClientTest.java" "$project_dir/tests/ArchiveTimelineTest.java" \
+    "$sources_dir/CredentialsStore.java" "$sources_dir/PlayerDisposalQueue.java" \
+    "$project_dir/tests/PlayerDisposalQueueTest.java" "$project_dir/tests/ApiClientTest.java" "$project_dir/tests/ArchiveTimelineTest.java" \
     "$project_dir/tests/java/ru/lex42/shinobiviewer/MediaServicesTest.java"
-for test in ArchiveTimelineTest MediaServicesTest ApiClientTest; do
+for test in ArchiveTimelineTest MediaServicesTest ApiClientTest PlayerDisposalQueueTest; do
     "$jdk_dir/bin/java" -cp "$classes_dir:$classpath" "ru.lex42.shinobiviewer.$test"
 done
