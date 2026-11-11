@@ -121,13 +121,13 @@ public final class ArchiveViewer extends LinearLayout {
         stage.addView(new ZoomGestureOverlay(getContext(),video,()->focus(s.camera.id),()->recordingActions(s)),new FrameLayout.LayoutParams(-1,-1));
         TextView name=text(s.camera.name,13);name.setTextColor(Color.WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);name.setPadding(dp(10),dp(6),dp(10),dp(6));name.setBackgroundColor(0x88000000);name.setContentDescription(s.camera.name+". Действия с записью");name.setOnClickListener(v->recordingActions(s));
         FrameLayout.LayoutParams label=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT);label.rightMargin=dp(44);stage.addView(name,label);
-        s.message=text("●",12);s.message.setGravity(Gravity.CENTER);s.message.setBackgroundColor(0x55000000);FrameLayout.LayoutParams dot=new FrameLayout.LayoutParams(dp(32),dp(32),Gravity.TOP|Gravity.RIGHT);stage.addView(s.message,dot);s.message.setOnClickListener(v->Toast.makeText(getContext(),s.stateText,Toast.LENGTH_SHORT).show());state(s,"Загрузка…");
+        s.message=text("",12);s.message.setTextColor(Color.WHITE);s.message.setMaxLines(2);s.message.setGravity(Gravity.CENTER);s.message.setPadding(dp(10),dp(6),dp(10),dp(6));s.message.setBackgroundColor(0xAA000000);s.message.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);FrameLayout.LayoutParams notice=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.CENTER_HORIZONTAL);notice.setMargins(dp(8),dp(8),dp(8),0);stage.addView(s.message,notice);state(s,"Загрузка…");
     }}
     private void state(Slot s,String message){
         s.stateText=message;if(s.message==null)return;
         boolean ok="SD".equals(message)||"4К".equals(message);
-        boolean waiting=message.contains("Загруз")||message.contains("Буфериза");
-        s.message.setTextColor(ok?accent:waiting?Color.rgb(245,190,91):Color.rgb(225,129,111));
+        s.message.setText(ok?"":message);
+        s.message.setVisibility(ok?GONE:VISIBLE);
         s.message.setContentDescription(s.camera.name+": "+message);s.message.setTooltipText(message);
     }
     private void focus(String id){focused=id.equals(focused)?null:id;for(Slot s:slots.values())clearPlayer(s);buildTiles();sync();}

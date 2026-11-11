@@ -26,7 +26,14 @@ public class ServicesInstrumentation extends Instrumentation {
             check(!disk.contains("test-secret-only")&&!disk.contains("test-user"),"encrypted persistence");
             store.clear();check(store.load("https://example.invalid")==null,"credential removal");
             if(uiSmoke)context.getSharedPreferences("MainActivity",0).edit().putString("server","http://10.0.2.2:18765").commit();
+            android.content.SharedPreferences themePrefs=context.getSharedPreferences("MainActivity",0);
+            themePrefs.edit().putString("theme","dark").remove("system_theme_migrated_v1").commit();
             activity=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            check("system".equals(themePrefs.getString("theme",""))&&themePrefs.getBoolean("system_theme_migrated_v1",false),"legacy theme migrates to system once");
+            themePrefs.edit().putString("theme","light").commit();
+            Activity first=activity;runOnMainSync(first::finish);waitForIdleSync();
+            activity=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            check("light".equals(themePrefs.getString("theme","")),"explicit post-migration theme survives restart");
             Activity host=activity;
             runOnMainSync(()->{
                 ArchiveViewer viewer=new ArchiveViewer(host,null,java.util.Collections.emptyList(),true,new ArchiveViewer.Listener(){public void onDownload(ApiClient.Recording r,boolean h,boolean s){}public void onFocus(ApiClient.Camera c,long t){}});
@@ -55,7 +62,7 @@ public class ServicesInstrumentation extends Instrumentation {
                 decoded.recycle();
             } finally {context.getContentResolver().delete(saved.get(),null,null);media.close();bitmap.recycle();}
             if(uiSmoke)checkUi(activity);
-            result.putString("stream","PASS: Keystore round trip, server scope, encrypted persistence, credential removal, PNG MediaStore save/read/pixel round trip, Android timeline measurement\n");
+            result.putString("stream","PASS: Keystore round trip, server scope, encrypted persistence, credential removal, PNG MediaStore save/read/pixel round trip, Android timeline measurement and theme migration\n");
             finish(Activity.RESULT_OK,result);
         }catch(Throwable error){result.putString("stream","FAIL: "+error.getClass().getSimpleName()+": "+error.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}
         finally {if(activity!=null){Activity target=activity;runOnMainSync(target::finish);}}
@@ -82,12 +89,12 @@ public class ServicesInstrumentation extends Instrumentation {
         long until=System.currentTimeMillis()+30000;AtomicBoolean home=new AtomicBoolean();
         while(System.currentTimeMillis()<until&&!home.get()){runOnMainSync(()->home.set(find(a.getWindow().getDecorView(),"Записи")!=null));Thread.sleep(250);}
         check(home.get(),"mock login and camera list");capture(a,"cameras");
-        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Переключить сетку и ленту")!=null,"single wall toggle");find(root,"Переключить сетку и ленту").performClick();find(root,"Настройки").performClick();});
+        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Переключить сетку и ленту")==null,"feed-only wall has no layout toggle");find(root,"Настройки").performClick();});
         capture(a,"settings");
         runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Тема приложения")!=null,"dedicated settings page");find(root,"Тёмная").performClick();check(find(a.getWindow().getDecorView(),"Системная")!=null,"theme setting survives redraw");find(a.getWindow().getDecorView(),"Системная").performClick();find(a.getWindow().getDecorView(),"Назад").performClick();});
         runOnMainSync(()->{
             android.view.View root=a.getWindow().getDecorView();android.view.View records=description(root,"Записи камеры Крыльцо");check(records!=null,"direct camera recordings action");records.performClick();
-            root=a.getWindow().getDecorView();check(description(root,"Назад к списку")!=null,"tile recordings preserve home origin");description(root,"Назад к списку").performClick();check(description(a.getWindow().getDecorView(),"Переключить сетку и ленту")!=null,"records back returns camera wall");
+            root=a.getWindow().getDecorView();check(description(root,"Назад к списку")!=null,"tile recordings preserve home origin");description(root,"Назад к списку").performClick();check(description(a.getWindow().getDecorView(),"Записи камеры Крыльцо")!=null,"records back returns camera feed");
         });
         runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");description(a.getWindow().getDecorView(),"Записи").performClick();});
         Thread.sleep(2000);capture(a,"viewer");
