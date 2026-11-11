@@ -29,7 +29,9 @@ public final class ArchiveTimelineTest {
         check(ArchiveTimeline.centeredScroll(1600,1600,400)==1200,"scroll right clamp");
         check(ArchiveTimeline.timeAt(200,0,epoch,dayEnd)==epoch,"zero-width layout safe");
         check(ArchiveTimeline.timeAt(800,1600,epoch,epoch+23*3600000L)==epoch+23*1800000L,"DST day coordinate proportional");
-        System.out.println("ArchiveTimeline: 17 tests passed");
+        check(ArchiveTimeline.contentWidth(400)==1600,"explicit content width survives unspecified child measure");
+        check(ArchiveTimeline.contentWidth(0)>0,"pre-layout timeline never has zero width");
+        System.out.println("ArchiveTimeline: 19 tests passed");
     }
     static void check(boolean ok,String name){if(!ok)throw new AssertionError(name);}
 }

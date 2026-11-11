@@ -39,7 +39,7 @@ public final class ArchiveViewer extends LinearLayout {
     private final int foreground,secondary,surface,accent=Color.rgb(81,191,179);
     private final LinearLayout wall;
     private final TextView clock,status;
-    private final Button play,quality,date,choose;
+    private final Button play,quality,date,choose,speedButton;
     private final TimelineView timeline;
     private final HorizontalScrollView timelineScroll;
     private boolean timelineTouched;
@@ -68,12 +68,13 @@ public final class ArchiveViewer extends LinearLayout {
         status=text("",12);status.setMaxLines(2);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setTextColor(secondary);addView(status);
         timeline=new TimelineView(context);
         timelineScroll=new HorizontalScrollView(context){
-            @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);timeline.setLayoutParams(new FrameLayout.LayoutParams(Math.max(1,w)*4,-1));if(!timelineTouched)post(()->centerTimeline(false));}
+            @Override protected void onMeasure(int widthSpec,int heightSpec){timeline.contentWidth=ArchiveTimeline.contentWidth(MeasureSpec.getSize(widthSpec));super.onMeasure(widthSpec,heightSpec);}
+            @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);if(!timelineTouched)post(()->centerTimeline(false));}
             @Override public boolean onTouchEvent(MotionEvent e){if(e.getActionMasked()==MotionEvent.ACTION_MOVE)timelineTouched=true;return super.onTouchEvent(e);}
         };
-        timelineScroll.setHorizontalScrollBarEnabled(false);timelineScroll.setOverScrollMode(OVER_SCROLL_NEVER);timelineScroll.addView(timeline,new FrameLayout.LayoutParams(dp(1200),-1));addView(timelineScroll,new LayoutParams(-1,dp(76)));
-        LinearLayout controls=row();controls.addView(button("−10",()->seek(time-10000)),weight());play=button("▶",()->{playing=!playing;lastTick=SystemClock.elapsedRealtime();sync();});play.setContentDescription("Воспроизвести или приостановить все камеры");controls.addView(play,weight());controls.addView(button("+10",()->seek(time+10000)),weight());
-        Button speedButton=button("1×",()->{});speedButton.setOnClickListener(v->{String[] labels={"0,5×","1×","1,5×","2×"};float[] values={.5f,1,1.5f,2};new AlertDialog.Builder(context).setTitle("Скорость воспроизведения").setItems(labels,(d,n)->{speed=values[n];speedButton.setText(labels[n]);for(Slot s:slots.values())if(s.ready)applySpeed(s);}).show();});controls.addView(speedButton,weight());addView(controls);
+        timelineScroll.setHorizontalScrollBarEnabled(false);timelineScroll.setOverScrollMode(OVER_SCROLL_NEVER);timelineScroll.addView(timeline,new FrameLayout.LayoutParams(dp(1200),dp(76)));addView(timelineScroll,new LayoutParams(-1,dp(76)));
+        LinearLayout controls=row();controls.addView(button("−10",()->seek(time-10000)),weight());play=playbackButton();play.setContentDescription("Воспроизвести или приостановить все камеры");controls.addView(play,weight());controls.addView(button("+10",()->seek(time+10000)),weight());
+        speedButton=button("1×",()->{});speedButton.setOnClickListener(v->{String[] labels={"0,5×","1×","2×","4×","8×","16×"};float[] values={.5f,1,2,4,8,16};new AlertDialog.Builder(context).setTitle("Скорость воспроизведения").setItems(labels,(d,n)->setSpeed(values[n])).show();});controls.addView(speedButton,weight());addView(controls);
         Calendar today=Calendar.getInstance();setDay(today);lastTick=SystemClock.elapsedRealtime();reload();ui.post(ticker);
     }
     private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
@@ -135,13 +136,30 @@ public final class ArchiveViewer extends LinearLayout {
         });});
     }
     private boolean valid(Slot s,int request,int version){return !disposed&&generation==request&&s.version==version;}
-    private void applySpeed(Slot s){if(s.ready&&s.player!=null){applySpeed(s,s.player);syncPlayback();}}
-    private void applySpeed(Slot s,MediaPlayer mp){try{boolean wasPlaying=mp.isPlaying();mp.setPlaybackParams(mp.getPlaybackParams().setSpeed(speed));if(!wasPlaying)mp.pause();}catch(Exception e){state(s,"Скорость не поддерживается");}}
+    private Button playbackButton(){
+        Button result=new Button(getContext()){
+            final Paint glyph=new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);glyph.setColor(foreground);float x=getWidth()/2f,y=getHeight()/2f;if(playing){canvas.drawRect(x-dp(8),y-dp(9),x-dp(3),y+dp(9),glyph);canvas.drawRect(x+dp(3),y-dp(9),x+dp(8),y+dp(9),glyph);}else{android.graphics.Path triangle=new android.graphics.Path();triangle.moveTo(x-dp(6),y-dp(10));triangle.lineTo(x+dp(10),y);triangle.lineTo(x-dp(6),y+dp(10));triangle.close();canvas.drawPath(triangle,glyph);}}
+        };
+        result.setText("");GradientDrawable background=new GradientDrawable();background.setColor(surface);background.setCornerRadius(dp(8));result.setBackground(background);result.setMinWidth(0);result.setMinimumWidth(0);result.setOnClickListener(v->{playing=!playing;lastTick=SystemClock.elapsedRealtime();sync();});return result;
+    }
+    private void rateLabel(){speedButton.setText(speed==.5f?"0,5×":((int)speed)+"×");}
+    private void applyRate(MediaPlayer player,float rate){boolean running=player.isPlaying();try{player.setPlaybackParams(player.getPlaybackParams().setSpeed(rate));if(Math.abs(player.getPlaybackParams().getSpeed()-rate)>.01f)throw new IllegalStateException();}finally{if(!running&&player.isPlaying())player.pause();}}
+    private void setSpeed(float requested){
+        if(disposed)return;speed=requested;boolean failed=false;
+        for(Slot slot:slots.values())if(slot.ready&&slot.player!=null&&!slot.failed)try{applyRate(slot.player,requested);}catch(Exception e){failed=true;}
+        if(failed)resetSpeed();else rateLabel();lastTick=SystemClock.elapsedRealtime();syncPlayback();
+    }
+    private void resetSpeed(){
+        speed=1;rateLabel();for(Slot slot:slots.values())if(slot.ready&&slot.player!=null&&!slot.failed)try{applyRate(slot.player,1);}catch(Exception e){slot.failed=true;try{slot.video.pause();}catch(Exception ignored){}state(slot,"Скорость не поддерживается");}
+        Toast.makeText(getContext(),"Эта скорость недоступна. Возвращено 1×",Toast.LENGTH_SHORT).show();
+    }
+    private void applySpeed(Slot s,MediaPlayer player){try{applyRate(player,speed);}catch(Exception e){resetSpeed();}}
     private void seekSlot(Slot s,int offset){if(!s.ready||s.failed)return;s.seeking=true;final int seek=++s.seekVersion,v=s.version;s.video.seekTo(offset);syncPlayback();ui.postDelayed(()->{if(!disposed&&s.version==v&&s.seekVersion==seek&&s.seeking){s.seeking=false;s.failed=true;s.video.pause();state(s,"Переход не выполнен · смените качество");syncPlayback();}},15000);}
     private boolean busy(){for(Slot s:slots.values())if(visible(s)&&s.row!=null&&!s.failed&&(s.loading||s.buffering||s.seeking))return true;return false;}
     private void syncPlayback(){boolean run=active&&playing&&!loading&&!busy();for(Slot s:slots.values())if(visible(s)&&s.ready&&!s.failed){if(run&&!s.video.isPlaying())s.video.start();else if(!run&&s.video.isPlaying())s.video.pause();}}
     private void sync(){if(disposed||loading)return;for(Slot s:slots.values()){if(!visible(s))continue;ApiClient.Recording row=ArchiveTimeline.at(s.rows,time);if(row!=s.row)loadSlot(s,row);else if(row==null)state(s,"Нет записи в этот момент");else if(row!=null&&s.ready&&!s.failed&&!s.seeking){int offset=ArchiveTimeline.offset(row,time);if(Math.abs(s.video.getCurrentPosition()-offset)>1500)seekSlot(s,offset);}}syncPlayback();update();}
-    private void update(){clock.setText(clockFormat.format(new Date(time))+"  ▾");play.setText(playing?"Ⅱ":"▶");timeline.invalidate();}
+    private void update(){clock.setText(clockFormat.format(new Date(time))+"  ▾");play.setContentDescription(playing?"Приостановить записи":"Воспроизвести записи");play.invalidate();timeline.invalidate();}
     private void seek(long absolute){time=ArchiveTimeline.clamp(absolute,dayStart,dayEnd);lastTick=SystemClock.elapsedRealtime();sync();}
     private void tick(){long now=SystemClock.elapsedRealtime();if(active&&!loading&&playing&&!busy()){time+=(long)(Math.min(1000,now-lastTick)*speed);if(time>=dayEnd){time=dayEnd-1;playing=false;}}lastTick=now;if(active&&!loading){sync();if(playing)status.setText(busy()?"Буферизация…":"");}}
     public void suspend(){active=false;syncPlayback();}
@@ -155,6 +173,8 @@ public final class ArchiveViewer extends LinearLayout {
     }
     private final class TimelineView extends View {
         final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        int contentWidth=1;
+        @Override protected void onMeasure(int widthSpec,int heightSpec){setMeasuredDimension(Math.max(1,contentWidth),dp(76));}
         long preview=-1;float downX,downY;boolean pressed,scrubbing,moved;
         final int slop=android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
         final Runnable hold=()->{if(pressed&&!moved){scrubbing=true;timelineTouched=true;getParent().requestDisallowInterceptTouchEvent(true);preview=ArchiveTimeline.timeAt(downX,getWidth(),dayStart,dayEnd);invalidate();}};

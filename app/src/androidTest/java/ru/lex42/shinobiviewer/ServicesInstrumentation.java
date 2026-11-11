@@ -27,6 +27,18 @@ public class ServicesInstrumentation extends Instrumentation {
             store.clear();check(store.load("https://example.invalid")==null,"credential removal");
             if(uiSmoke)context.getSharedPreferences("MainActivity",0).edit().putString("server","http://10.0.2.2:18765").commit();
             activity=startActivitySync(new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            Activity host=activity;
+            runOnMainSync(()->{
+                ArchiveViewer viewer=new ArchiveViewer(host,null,java.util.Collections.emptyList(),true,new ArchiveViewer.Listener(){public void onDownload(ApiClient.Recording r,boolean h,boolean s){}public void onFocus(ApiClient.Camera c,long t){}});
+                try{
+                    int width=360,height=640;
+                    viewer.measure(android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(height,android.view.View.MeasureSpec.EXACTLY));viewer.layout(0,0,width,height);
+                    android.widget.HorizontalScrollView scroll=findTimelineScroll(viewer);check(scroll!=null,"timeline scroll exists with no selected cameras");
+                    android.view.View timeline=scroll.getChildAt(0);
+                    check(timeline.getMeasuredWidth()==4*scroll.getMeasuredWidth(),"timeline retains four viewport width under UNSPECIFIED child measure");
+                    check(timeline.getMeasuredHeight()==(int)(76*host.getResources().getDisplayMetrics().density+.5f),"timeline nonzero fixed height");
+                }finally{viewer.destroy();}
+            });
             MediaFiles media=new MediaFiles(activity);
             CountDownLatch latch=new CountDownLatch(1);AtomicReference<Uri> saved=new AtomicReference<>();AtomicReference<String> error=new AtomicReference<>();
             Bitmap bitmap=Bitmap.createBitmap(32,24,Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.MAGENTA);
@@ -43,7 +55,7 @@ public class ServicesInstrumentation extends Instrumentation {
                 decoded.recycle();
             } finally {context.getContentResolver().delete(saved.get(),null,null);media.close();bitmap.recycle();}
             if(uiSmoke)checkUi(activity);
-            result.putString("stream","PASS: Keystore round trip, server scope, encrypted persistence, credential removal, PNG MediaStore save/read/pixel round trip\n");
+            result.putString("stream","PASS: Keystore round trip, server scope, encrypted persistence, credential removal, PNG MediaStore save/read/pixel round trip, Android timeline measurement\n");
             finish(Activity.RESULT_OK,result);
         }catch(Throwable error){result.putString("stream","FAIL: "+error.getClass().getSimpleName()+": "+error.getMessage()+"\n");finish(Activity.RESULT_CANCELED,result);}
         finally {if(activity!=null){Activity target=activity;runOnMainSync(target::finish);}}
@@ -52,6 +64,14 @@ public class ServicesInstrumentation extends Instrumentation {
         if(label.contentEquals(root.getContentDescription()==null?"":root.getContentDescription()))return root;
         if(root instanceof android.widget.TextView){android.widget.TextView t=(android.widget.TextView)root;if(label.contentEquals(t.getText())||(t.getHint()!=null&&label.contentEquals(t.getHint())))return root;}
         if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.view.View found=find(g.getChildAt(i),label);if(found!=null)return found;}}return null;
+    }
+    private android.widget.HorizontalScrollView findTimelineScroll(android.view.View root){
+        if(root instanceof android.widget.HorizontalScrollView)return (android.widget.HorizontalScrollView)root;
+        if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.widget.HorizontalScrollView found=findTimelineScroll(g.getChildAt(i));if(found!=null)return found;}}return null;
+    }
+    private android.view.View description(android.view.View root,String label){
+        if(label.contentEquals(root.getContentDescription()==null?"":root.getContentDescription()))return root;
+        if(root instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)root;for(int i=0;i<group.getChildCount();i++){android.view.View found=description(group.getChildAt(i),label);if(found!=null)return found;}}return null;
     }
     private void capture(Activity a,String name)throws Exception{
         Bitmap b=getUiAutomation().takeScreenshot();check(b!=null,"UI screenshot");try(OutputStream out=new FileOutputStream(new File(a.getFilesDir(),name+".png"))){b.compress(Bitmap.CompressFormat.PNG,100,out);}finally{b.recycle();}
@@ -65,7 +85,7 @@ public class ServicesInstrumentation extends Instrumentation {
         runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Переключить сетку и ленту")!=null,"single wall toggle");find(root,"Переключить сетку и ленту").performClick();find(root,"Настройки").performClick();});
         capture(a,"settings");
         runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Тема приложения")!=null,"dedicated settings page");find(root,"Тёмная").performClick();check(find(a.getWindow().getDecorView(),"Системная")!=null,"theme setting survives redraw");find(a.getWindow().getDecorView(),"Системная").performClick();find(a.getWindow().getDecorView(),"Назад").performClick();});
-        runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");find(a.getWindow().getDecorView(),"Записи").performClick();});
+        runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");description(a.getWindow().getDecorView(),"Записи").performClick();});
         Thread.sleep(2000);capture(a,"viewer");
         runOnMainSync(()->check(find(a.getWindow().getDecorView(),"Выберите камеры")!=null,"viewer navigation"));
     }
