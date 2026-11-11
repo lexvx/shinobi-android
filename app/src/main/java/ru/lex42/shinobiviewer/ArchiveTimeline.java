@@ -19,7 +19,8 @@ public final class ArchiveTimeline {
         return (int)Math.min(Integer.MAX_VALUE, Math.max(0, time - row.startMs()));
     }
     /** HorizontalScrollView measures children with UNSPECIFIED width; retain explicit day width. */
-    public static int contentWidth(int viewportWidth){return Math.max(1,Math.min(Integer.MAX_VALUE/4,viewportWidth))*4;}
+    public static int contentWidth(int viewportWidth){return Math.max(1,Math.min(Integer.MAX_VALUE/8,viewportWidth))*8;}
+    public static float bubbleLeft(float fingerX,int bubbleWidth,int viewportWidth){return Math.max(0,Math.min(Math.max(0,viewportWidth-bubbleWidth),fingerX-bubbleWidth/2f));}
     public static long timeAt(double x, double width, long start, long end) {
         if (width <= 0 || end <= start) return start;
         return clamp(start + (long)(Math.max(0, Math.min(1, x / width)) * (end - start)), start, end);

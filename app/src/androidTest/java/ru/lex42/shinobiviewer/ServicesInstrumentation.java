@@ -35,7 +35,7 @@ public class ServicesInstrumentation extends Instrumentation {
                     viewer.measure(android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(height,android.view.View.MeasureSpec.EXACTLY));viewer.layout(0,0,width,height);
                     android.widget.HorizontalScrollView scroll=findTimelineScroll(viewer);check(scroll!=null,"timeline scroll exists with no selected cameras");
                     android.view.View timeline=scroll.getChildAt(0);
-                    check(timeline.getMeasuredWidth()==4*scroll.getMeasuredWidth(),"timeline retains four viewport width under UNSPECIFIED child measure");
+                    check(timeline.getMeasuredWidth()==8*scroll.getMeasuredWidth(),"timeline retains eight viewport width under UNSPECIFIED child measure");
                     check(timeline.getMeasuredHeight()==(int)(76*host.getResources().getDisplayMetrics().density+.5f),"timeline nonzero fixed height");
                 }finally{viewer.destroy();}
             });
@@ -85,6 +85,10 @@ public class ServicesInstrumentation extends Instrumentation {
         runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Переключить сетку и ленту")!=null,"single wall toggle");find(root,"Переключить сетку и ленту").performClick();find(root,"Настройки").performClick();});
         capture(a,"settings");
         runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Тема приложения")!=null,"dedicated settings page");find(root,"Тёмная").performClick();check(find(a.getWindow().getDecorView(),"Системная")!=null,"theme setting survives redraw");find(a.getWindow().getDecorView(),"Системная").performClick();find(a.getWindow().getDecorView(),"Назад").performClick();});
+        runOnMainSync(()->{
+            android.view.View root=a.getWindow().getDecorView();android.view.View records=description(root,"Записи камеры Крыльцо");check(records!=null,"direct camera recordings action");records.performClick();
+            root=a.getWindow().getDecorView();check(description(root,"Назад к списку")!=null,"tile recordings preserve home origin");description(root,"Назад к списку").performClick();check(description(a.getWindow().getDecorView(),"Переключить сетку и ленту")!=null,"records back returns camera wall");
+        });
         runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");description(a.getWindow().getDecorView(),"Записи").performClick();});
         Thread.sleep(2000);capture(a,"viewer");
         runOnMainSync(()->check(find(a.getWindow().getDecorView(),"Выберите камеры")!=null,"viewer navigation"));

@@ -42,6 +42,10 @@ public final class ArchiveViewer extends LinearLayout {
     private final Button play,quality,date,choose,speedButton;
     private final TimelineView timeline;
     private final HorizontalScrollView timelineScroll;
+    private final TextView timeBubble;
+    private final SimpleDateFormat bubbleFormat=new SimpleDateFormat("HH:mm:ss",Locale.ROOT);
+    private boolean bubbleTracking;
+    private float bubbleFingerX;
     private boolean timelineTouched;
     private final SimpleDateFormat clockFormat=new SimpleDateFormat("dd MMM yyyy · HH:mm:ss",new Locale("ru"));
     private final SimpleDateFormat dateFormat=new SimpleDateFormat("dd MMMM",new Locale("ru"));
@@ -67,12 +71,22 @@ public final class ArchiveViewer extends LinearLayout {
         ScrollView scroll=new ScrollView(context);wall=new LinearLayout(context);wall.setOrientation(VERTICAL);scroll.addView(wall);addView(scroll,new LayoutParams(-1,0,1));
         status=text("",12);status.setMaxLines(2);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setTextColor(secondary);addView(status);
         timeline=new TimelineView(context);
+        FrameLayout timelineArea=new FrameLayout(context);
+        timeBubble=text("00:00:00",13);timeBubble.setTextColor(foreground);timeBubble.setGravity(Gravity.CENTER);timeBubble.setTypeface(null,1);GradientDrawable bubbleBackground=new GradientDrawable();bubbleBackground.setColor(surface);bubbleBackground.setCornerRadius(dp(7));timeBubble.setBackground(bubbleBackground);timeBubble.setElevation(dp(4));timeBubble.setVisibility(INVISIBLE);timeBubble.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         timelineScroll=new HorizontalScrollView(context){
             @Override protected void onMeasure(int widthSpec,int heightSpec){timeline.contentWidth=ArchiveTimeline.contentWidth(MeasureSpec.getSize(widthSpec));super.onMeasure(widthSpec,heightSpec);}
             @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);if(!timelineTouched)post(()->centerTimeline(false));}
+            @Override public boolean dispatchTouchEvent(MotionEvent e){
+                int action=e.getActionMasked();
+                if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_MOVE){bubbleTracking=true;bubbleFingerX=e.getX();}
+                boolean consumed=super.dispatchTouchEvent(e);
+                if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){bubbleTracking=false;timeBubble.setVisibility(INVISIBLE);}else if(bubbleTracking)showTimeBubble();
+                return consumed;
+            }
+            @Override protected void onScrollChanged(int l,int t,int oldl,int oldt){super.onScrollChanged(l,t,oldl,oldt);if(bubbleTracking)showTimeBubble();}
             @Override public boolean onTouchEvent(MotionEvent e){if(e.getActionMasked()==MotionEvent.ACTION_MOVE)timelineTouched=true;return super.onTouchEvent(e);}
         };
-        timelineScroll.setHorizontalScrollBarEnabled(false);timelineScroll.setOverScrollMode(OVER_SCROLL_NEVER);timelineScroll.addView(timeline,new FrameLayout.LayoutParams(dp(1200),dp(76)));addView(timelineScroll,new LayoutParams(-1,dp(76)));
+        timelineScroll.setHorizontalScrollBarEnabled(false);timelineScroll.setOverScrollMode(OVER_SCROLL_NEVER);timelineScroll.addView(timeline,new FrameLayout.LayoutParams(dp(1200),dp(76)));timelineArea.addView(timelineScroll,new FrameLayout.LayoutParams(-1,dp(76),Gravity.BOTTOM));timelineArea.addView(timeBubble,new FrameLayout.LayoutParams(dp(82),dp(28),Gravity.TOP|Gravity.LEFT));addView(timelineArea,new LayoutParams(-1,dp(108)));
         LinearLayout controls=row();controls.addView(button("−10",()->seek(time-10000)),weight());play=playbackButton();play.setContentDescription("Воспроизвести или приостановить все камеры");controls.addView(play,weight());controls.addView(button("+10",()->seek(time+10000)),weight());
         speedButton=button("1×",()->{});speedButton.setOnClickListener(v->{String[] labels={"0,5×","1×","2×","4×","8×","16×"};float[] values={.5f,1,2,4,8,16};new AlertDialog.Builder(context).setTitle("Скорость воспроизведения").setItems(labels,(d,n)->setSpeed(values[n])).show();});controls.addView(speedButton,weight());addView(controls);
         Calendar today=Calendar.getInstance();setDay(today);lastTick=SystemClock.elapsedRealtime();reload();ui.post(ticker);
@@ -162,10 +176,17 @@ public final class ArchiveViewer extends LinearLayout {
     private void update(){clock.setText(clockFormat.format(new Date(time))+"  ▾");play.setContentDescription(playing?"Приостановить записи":"Воспроизвести записи");play.invalidate();timeline.invalidate();}
     private void seek(long absolute){time=ArchiveTimeline.clamp(absolute,dayStart,dayEnd);lastTick=SystemClock.elapsedRealtime();sync();}
     private void tick(){long now=SystemClock.elapsedRealtime();if(active&&!loading&&playing&&!busy()){time+=(long)(Math.min(1000,now-lastTick)*speed);if(time>=dayEnd){time=dayEnd-1;playing=false;}}lastTick=now;if(active&&!loading){sync();if(playing)status.setText(busy()?"Буферизация…":"");}}
-    public void suspend(){active=false;syncPlayback();}
+    public void suspend(){bubbleTracking=false;timeBubble.setVisibility(INVISIBLE);active=false;syncPlayback();}
     public void resume(){if(disposed)return;active=true;lastTick=SystemClock.elapsedRealtime();sync();}
     public void destroy(){if(disposed)return;disposed=true;++generation;ui.removeCallbacksAndMessages(null);clearSlots();workers.shutdownNow();}
 
+    private void showTimeBubble(){
+        if(disposed||!bubbleTracking)return;
+        long at=ArchiveTimeline.timeAt(timelineScroll.getScrollX()+bubbleFingerX,timeline.getWidth(),dayStart,dayEnd);
+        timeBubble.setText(bubbleFormat.format(new Date(at)));
+        timeBubble.setTranslationX(ArchiveTimeline.bubbleLeft(bubbleFingerX,dp(82),timelineScroll.getWidth()));
+        timeBubble.setVisibility(VISIBLE);
+    }
     private void centerTimeline(boolean explicit){
         if(disposed||(!explicit&&timelineTouched))return;
         int x=ArchiveTimeline.centeredScroll(ArchiveTimeline.position(time,timeline.getWidth(),dayStart,dayEnd),timeline.getWidth(),timelineScroll.getWidth());
@@ -185,7 +206,7 @@ public final class ArchiveViewer extends LinearLayout {
             for(Slot slot:slots.values()){paint.setColor(accent);for(ApiClient.Recording r:slot.rows){float x1=(float)ArchiveTimeline.position(Math.max(dayStart,r.startMs),w,dayStart,dayEnd),x2=(float)ArchiveTimeline.position(Math.min(dayEnd,r.endMs),w,dayStart,dayEnd);if(x2>x1)canvas.drawRect(x1,top+lane*(bottom-top)/n+1,x2,top+(lane+1)*(bottom-top)/n-1,paint);}lane++;}
             paint.setTextSize(dp(10));paint.setStrokeWidth(dp(1));
             Calendar tick=Calendar.getInstance();tick.setTimeInMillis(dayStart);
-            while(tick.getTimeInMillis()<=dayEnd){long instant=tick.getTimeInMillis();float x=(float)ArchiveTimeline.position(instant,w,dayStart,dayEnd);paint.setColor(secondary);canvas.drawLine(x,bottom,x,bottom+dp(5),paint);String label=instant==dayEnd?"24:00":String.format(Locale.ROOT,"%02d:00",tick.get(Calendar.HOUR_OF_DAY));canvas.drawText(label,Math.max(0,Math.min(w-paint.measureText(label),x-paint.measureText(label)/2)),h-dp(4),paint);tick.add(Calendar.HOUR_OF_DAY,1);}
+            while(tick.getTimeInMillis()<=dayEnd){long instant=tick.getTimeInMillis();float x=(float)ArchiveTimeline.position(instant,w,dayStart,dayEnd);paint.setColor(secondary);canvas.drawLine(x,bottom,x,bottom+dp(5),paint);String label=instant==dayEnd?"24:00":String.format(Locale.ROOT,"%02d:%02d",tick.get(Calendar.HOUR_OF_DAY),tick.get(Calendar.MINUTE));canvas.drawText(label,Math.max(0,Math.min(w-paint.measureText(label),x-paint.measureText(label)/2)),h-dp(4),paint);tick.add(Calendar.MINUTE,30);}
             paint.setColor(foreground);float cursor=(float)ArchiveTimeline.position(preview>=0?preview:time,w,dayStart,dayEnd);paint.setStrokeWidth(dp(2));canvas.drawLine(cursor,top-3,cursor,bottom+3,paint);canvas.drawCircle(cursor,top,dp(4),paint);
         }
         @Override public boolean onTouchEvent(MotionEvent event){
