@@ -46,7 +46,7 @@ public class ServicesInstrumentation extends Instrumentation {
                     check(timeline.getMeasuredHeight()==(int)(76*host.getResources().getDisplayMetrics().density+.5f),"timeline nonzero fixed height");
                 }finally{viewer.destroy();}
             });
-            runOnMainSync(()->checkArchiveFocus(host));
+            runOnMainSync(()->{checkLoginLayout(host);checkArchiveFocus(host);});
             MediaFiles media=new MediaFiles(activity);
             CountDownLatch latch=new CountDownLatch(1);AtomicReference<Uri> saved=new AtomicReference<>();AtomicReference<String> error=new AtomicReference<>();
             Bitmap bitmap=Bitmap.createBitmap(32,24,Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.MAGENTA);
@@ -72,6 +72,23 @@ public class ServicesInstrumentation extends Instrumentation {
         if(label.contentEquals(root.getContentDescription()==null?"":root.getContentDescription()))return root;
         if(root instanceof android.widget.TextView){android.widget.TextView t=(android.widget.TextView)root;if(label.contentEquals(t.getText())||(t.getHint()!=null&&label.contentEquals(t.getHint())))return root;}
         if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.view.View found=find(g.getChildAt(i),label);if(found!=null)return found;}}return null;
+    }
+    private void checkLoginLayout(Activity host){
+        android.widget.EditText login=(android.widget.EditText)find(host.getWindow().getDecorView(),"Логин");
+        check(login!=null,"login field exists before authentication");
+        android.view.View form=(android.view.View)login.getParent();
+        android.widget.ScrollView scroll=(android.widget.ScrollView)form.getParent();
+        android.view.ViewGroup content=(android.view.ViewGroup)scroll.getParent();
+        android.view.ViewGroup art=(android.view.ViewGroup)content.getChildAt(0);
+        float density=host.getResources().getDisplayMetrics().density;
+        for(int dpHeight:new int[]{700,400,200}){
+            int width=(int)(360*density+.5f),height=(int)(dpHeight*density+.5f);
+            content.measure(android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(height,android.view.View.MeasureSpec.EXACTLY));content.layout(0,0,width,height);
+            check(scroll.getBottom()==height,"login form anchored above viewport bottom");
+            check(art.getHeight()>0&&art.getVisibility()==android.view.View.VISIBLE&&art.getChildAt(1).getHeight()>0,"hero remains visible at reduced keyboard viewport");
+            check(art.getBottom()==scroll.getTop(),"hero and form do not overlap");
+        }
+        content.requestLayout();
     }
     private void checkArchiveFocus(Activity host){
         AtomicReference<ApiClient.Recording> focused=new AtomicReference<>();AtomicLong at=new AtomicLong();AtomicBoolean high=new AtomicBoolean();

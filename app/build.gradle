@@ -7,8 +7,8 @@ android {
         applicationId 'ru.lex42.shinobiviewer'
         minSdk 26
         targetSdk 35
-        versionCode 11
-        versionName '0.2.6'
+        versionCode 12
+        versionName '0.2.7'
         testInstrumentationRunner 'ru.lex42.shinobiviewer.ServicesInstrumentation'
     }
     compileOptions {
