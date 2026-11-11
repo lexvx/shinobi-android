@@ -28,6 +28,7 @@ public final class ArchiveViewer extends LinearLayout {
     public interface Listener {
         void onDownload(ApiClient.Recording recording, boolean high, boolean share);
         default void onFocus(ApiClient.Camera camera, long archiveTime) {}
+        default void onFocus(ApiClient.Camera camera, ApiClient.Recording record,long archiveTime,boolean high){onFocus(camera,archiveTime);}
     }
     private final ApiClient api;
     private final List<ApiClient.Camera> cameras;
@@ -53,7 +54,19 @@ public final class ArchiveViewer extends LinearLayout {
     private boolean high,playing,active=true,disposed,loading;
     private int generation;
     private float speed=1;
-    private String focused;
+    public static final class SavedState {
+        public final List<String> cameraIds;
+        public final long day,time;
+        public final boolean high,playing;
+        public final float speed;
+        private SavedState(Collection<String> ids,long day,long time,boolean high,boolean playing,float speed){this.cameraIds=Collections.unmodifiableList(new ArrayList<>(ids));this.day=day;this.time=time;this.high=high;this.playing=playing;this.speed=speed;}
+    }
+    private SavedState pendingRestore;
+    public SavedState snapshot(){return new SavedState(selected,dayStart,time,high,playing,speed);}
+    public void restore(SavedState state){
+        if(disposed||state==null)return;selected.clear();for(ApiClient.Camera c:cameras)if(state.cameraIds.contains(c.id))selected.add(c.id);
+        Calendar day=Calendar.getInstance();day.setTimeInMillis(state.day);setDay(day);time=ArchiveTimeline.clamp(state.time,dayStart,dayEnd);high=state.high;quality.setText(high?"4К":"SD");speed=state.speed;rateLabel();pendingRestore=state;reload();
+    }
     private final Runnable ticker=new Runnable(){public void run(){if(disposed)return;tick();ui.postDelayed(this,250);}};
     private static final class Slot {
         ApiClient.Camera camera; List<ApiClient.Recording> rows=Collections.emptyList();
@@ -99,18 +112,17 @@ public final class ArchiveViewer extends LinearLayout {
     private void setDay(Calendar day){timelineTouched=false;day.set(Calendar.HOUR_OF_DAY,0);day.set(Calendar.MINUTE,0);day.set(Calendar.SECOND,0);day.set(Calendar.MILLISECOND,0);dayStart=day.getTimeInMillis();day.add(Calendar.DAY_OF_MONTH,1);dayEnd=day.getTimeInMillis();time=ArchiveTimeline.clamp(System.currentTimeMillis()-300000,dayStart,dayEnd);date.setText(dateFormat.format(new Date(dayStart)));ui.post(()->centerTimeline(false));}
     private void pickDate(){Calendar c=Calendar.getInstance();c.setTimeInMillis(dayStart);new DatePickerDialog(getContext(),(v,y,m,d)->{Calendar chosen=Calendar.getInstance();chosen.set(y,m,d);setDay(chosen);reload();},c.get(Calendar.YEAR),c.get(Calendar.MONTH),c.get(Calendar.DAY_OF_MONTH)).show();}
     private void pickTime(){Calendar c=Calendar.getInstance();c.setTimeInMillis(time);new TimePickerDialog(getContext(),(v,h,m)->{Calendar chosen=Calendar.getInstance();chosen.setTimeInMillis(dayStart);chosen.set(Calendar.HOUR_OF_DAY,h);chosen.set(Calendar.MINUTE,m);seek(chosen.getTimeInMillis());centerTimeline(true);},c.get(Calendar.HOUR_OF_DAY),c.get(Calendar.MINUTE),true).show();}
-    private void chooseCameras(){String[] names=new String[cameras.size()];boolean[] checked=new boolean[names.length];for(int i=0;i<names.length;i++){names[i]=cameras.get(i).name;checked[i]=selected.contains(cameras.get(i).id);}new AlertDialog.Builder(getContext()).setTitle("Камеры · записи").setMultiChoiceItems(names,checked,(d,n,on)->checked[n]=on).setNegativeButton("Отмена",null).setPositiveButton("Показать",(d,w)->{selected.clear();for(int i=0;i<checked.length;i++)if(checked[i])selected.add(cameras.get(i).id);focused=null;reload();}).show();}
+    private void chooseCameras(){String[] names=new String[cameras.size()];boolean[] checked=new boolean[names.length];for(int i=0;i<names.length;i++){names[i]=cameras.get(i).name;checked[i]=selected.contains(cameras.get(i).id);}new AlertDialog.Builder(getContext()).setTitle("Камеры · записи").setMultiChoiceItems(names,checked,(d,n,on)->checked[n]=on).setNegativeButton("Отмена",null).setPositiveButton("Показать",(d,w)->{selected.clear();for(int i=0;i<checked.length;i++)if(checked[i])selected.add(cameras.get(i).id);reload();}).show();}
     private void reload(){
         if(disposed)return;
-        final int request=++generation;loading=true;playing=false;clearSlots();wall.removeAllViews();choose.setText("Камеры · "+selected.size());status.setText("Загрузка записей…");
+        final SavedState restored=pendingRestore;pendingRestore=null;final int request=++generation;loading=true;playing=false;clearSlots();wall.removeAllViews();choose.setText("Камеры · "+selected.size());status.setText("Загрузка записей…");
         for(ApiClient.Camera c:cameras)if(selected.contains(c.id)){Slot s=new Slot();s.camera=c;slots.put(c.id,s);}
         if(slots.isEmpty()){loading=false;status.setText("Выберите камеры");update();return;}
         buildTiles();final int[] remaining={slots.size()};final List<String> errors=new ArrayList<>();final long from=dayStart,to=dayEnd;
-        for(Slot s:slots.values())workers.execute(()->{List<ApiClient.Recording> rows;String failure=null;try{rows=api.recordings(s.camera.id,from,to);}catch(Exception e){rows=Collections.emptyList();failure="Не удалось загрузить записи";}final List<ApiClient.Recording> result=rows;final String problem=failure;ui.post(()->{if(disposed||request!=generation)return;s.rows=result;if(problem!=null){errors.add(s.camera.name);state(s,problem);}if(--remaining[0]==0){loading=false;long latest=dayStart;boolean any=false;for(Slot slot:slots.values())for(ApiClient.Recording r:slot.rows){latest=Math.max(latest,r.startMs);any=true;}if(any)time=latest;if(!timelineTouched)centerTimeline(false);status.setText(errors.isEmpty()?"":"Не загружены: "+join(errors));sync();timeline.invalidate();}});});
+        for(Slot s:slots.values())workers.execute(()->{List<ApiClient.Recording> rows;String failure=null;try{rows=api.recordings(s.camera.id,from,to);}catch(Exception e){rows=Collections.emptyList();failure="Не удалось загрузить записи";}final List<ApiClient.Recording> result=rows;final String problem=failure;ui.post(()->{if(disposed||request!=generation)return;s.rows=result;if(problem!=null){errors.add(s.camera.name);state(s,problem);}if(--remaining[0]==0){loading=false;long latest=dayStart;boolean any=false;for(Slot slot:slots.values())for(ApiClient.Recording r:slot.rows){latest=Math.max(latest,r.startMs);any=true;}if(restored!=null){time=ArchiveTimeline.clamp(restored.time,dayStart,dayEnd);playing=restored.playing;}else if(any)time=latest;if(!timelineTouched)centerTimeline(false);status.setText(errors.isEmpty()?"":"Не загружены: "+join(errors));sync();timeline.invalidate();}});});
     }
     private String join(List<String> values){StringBuilder b=new StringBuilder();for(String v:values){if(b.length()>0)b.append(", ");b.append(v);}return b.toString();}
     private void buildTiles(){wall.removeAllViews();for(Slot s:slots.values()){
-        if(focused!=null&&!focused.equals(s.camera.id))continue;
         LinearLayout tile=new LinearLayout(getContext());s.tile=tile;tile.setOrientation(VERTICAL);
         LayoutParams lp=new LayoutParams(-1,-2);lp.setMargins(0,0,0,dp(10));wall.addView(tile,lp);
         FrameLayout stage=new FrameLayout(getContext()){
@@ -130,11 +142,16 @@ public final class ArchiveViewer extends LinearLayout {
         s.message.setVisibility(ok?GONE:VISIBLE);
         s.message.setContentDescription(s.camera.name+": "+message);s.message.setTooltipText(message);
     }
-    private void focus(String id){focused=id.equals(focused)?null:id;for(Slot s:slots.values())clearPlayer(s);buildTiles();sync();}
-    private void recordingActions(Slot s){if(disposed)return;if(s.row==null){Toast.makeText(getContext(),"В этот момент нет записи",Toast.LENGTH_SHORT).show();return;}final ApiClient.Recording chosen=s.row;String[] actions={"Скачать SD","Скачать 4К","Отправить SD","Отправить 4К","На весь экран"};new AlertDialog.Builder(getContext()).setTitle(s.camera.name).setItems(actions,(d,n)->{if(disposed||s.row==null)return;if(n==4){listener.onFocus(s.camera,time);return;}listener.onDownload(chosen,n%2==1,n>=2);}).show();}
+    private void focus(String id){
+        if(disposed)return;Slot slot=slots.get(id);if(slot==null)return;
+        ApiClient.Recording record=ArchiveTimeline.at(slot.rows,time);
+        if(record==null){Toast.makeText(getContext(),loading?"Дождитесь загрузки записей":"В этот момент нет записи",Toast.LENGTH_SHORT).show();return;}
+        listener.onFocus(slot.camera,record,time,high);
+    }
+    private void recordingActions(Slot s){if(disposed)return;if(s.row==null){Toast.makeText(getContext(),"В этот момент нет записи",Toast.LENGTH_SHORT).show();return;}final ApiClient.Recording chosen=s.row;String[] actions={"Скачать SD","Скачать 4К","Отправить SD","Отправить 4К","На весь экран"};new AlertDialog.Builder(getContext()).setTitle(s.camera.name).setItems(actions,(d,n)->{if(disposed||s.row==null)return;if(n==4){focus(s.camera.id);return;}listener.onDownload(chosen,n%2==1,n>=2);}).show();}
     private void clearPlayer(Slot s){++s.version;if(s.video!=null){s.video.stopPlayback();s.video.setVisibility(INVISIBLE);}s.player=null;++s.seekVersion;s.ready=s.loading=s.buffering=s.failed=s.seeking=false;s.row=null;}
     private void clearSlots(){for(Slot s:slots.values())clearPlayer(s);slots.clear();}
-    private boolean visible(Slot s){return focused==null||focused.equals(s.camera.id);}
+    private boolean visible(Slot s){return true;}
     private void loadSlot(Slot s,ApiClient.Recording row){
         clearPlayer(s);s.row=row;if(!visible(s))return;
         if(row==null){state(s,"Нет записи в этот момент");return;}

@@ -46,6 +46,7 @@ public class ServicesInstrumentation extends Instrumentation {
                     check(timeline.getMeasuredHeight()==(int)(76*host.getResources().getDisplayMetrics().density+.5f),"timeline nonzero fixed height");
                 }finally{viewer.destroy();}
             });
+            runOnMainSync(()->checkArchiveFocus(host));
             MediaFiles media=new MediaFiles(activity);
             CountDownLatch latch=new CountDownLatch(1);AtomicReference<Uri> saved=new AtomicReference<>();AtomicReference<String> error=new AtomicReference<>();
             Bitmap bitmap=Bitmap.createBitmap(32,24,Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.MAGENTA);
@@ -72,6 +73,29 @@ public class ServicesInstrumentation extends Instrumentation {
         if(root instanceof android.widget.TextView){android.widget.TextView t=(android.widget.TextView)root;if(label.contentEquals(t.getText())||(t.getHint()!=null&&label.contentEquals(t.getHint())))return root;}
         if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.view.View found=find(g.getChildAt(i),label);if(found!=null)return found;}}return null;
     }
+    private void checkArchiveFocus(Activity host){
+        AtomicReference<ApiClient.Recording> focused=new AtomicReference<>();AtomicLong at=new AtomicLong();AtomicBoolean high=new AtomicBoolean();
+        ArchiveViewer viewer=new ArchiveViewer(host,null,java.util.Collections.emptyList(),true,new ArchiveViewer.Listener(){
+            public void onDownload(ApiClient.Recording r,boolean h,boolean s){}
+            public void onFocus(ApiClient.Camera camera,ApiClient.Recording record,long time,boolean quality){focused.set(record);at.set(time);high.set(quality);}
+        });
+        try{
+            Class<?> slotType=Class.forName("ru.lex42.shinobiviewer.ArchiveViewer$Slot");java.lang.reflect.Constructor<?> ctor=slotType.getDeclaredConstructor();ctor.setAccessible(true);Object slot=ctor.newInstance();
+            ApiClient.Camera camera=new ApiClient.Camera(new org.json.JSONObject().put("mid","test-camera").put("name","Test"));
+            ApiClient.Recording record=new ApiClient.Recording(camera.id,"test","https://example.invalid/test.mp4",1000,9000);
+            android.widget.VideoView video=new android.widget.VideoView(host);
+            field(slotType,slot,"camera",camera);field(slotType,slot,"rows",java.util.Collections.singletonList(record));field(slotType,slot,"row",record);field(slotType,slot,"video",video);field(slotType,slot,"version",7);
+            java.lang.reflect.Field slots=ArchiveViewer.class.getDeclaredField("slots");slots.setAccessible(true);((java.util.Map)slots.get(viewer)).put(camera.id,slot);
+            field(ArchiveViewer.class,viewer,"time",4000L);field(ArchiveViewer.class,viewer,"high",true);field(ArchiveViewer.class,viewer,"loading",true);
+            java.lang.reflect.Method focus=ArchiveViewer.class.getDeclaredMethod("focus",String.class);focus.setAccessible(true);focus.invoke(viewer,camera.id);
+            check(focused.get()==record&&at.get()==4000&&high.get(),"focus passes selected interval, time and quality while loading");
+            check(read(slotType,slot,"video")==video&&read(slotType,slot,"row")==record&&((Integer)read(slotType,slot,"version"))==7,"focus never clears/rebuilds player");
+            focused.set(null);field(slotType,slot,"rows",java.util.Collections.emptyList());focus.invoke(viewer,camera.id);
+            check(focused.get()==null&&read(slotType,slot,"video")==video&&((Integer)read(slotType,slot,"version"))==7,"missing interval leaves existing player intact");
+        }catch(Exception failure){throw new AssertionError("archive focus regression",failure);}finally{viewer.destroy();}
+    }
+    private static void field(Class<?> type,Object owner,String name,Object value)throws Exception{java.lang.reflect.Field f=type.getDeclaredField(name);f.setAccessible(true);f.set(owner,value);}
+    private static Object read(Class<?> type,Object owner,String name)throws Exception{java.lang.reflect.Field f=type.getDeclaredField(name);f.setAccessible(true);return f.get(owner);}
     private android.widget.HorizontalScrollView findTimelineScroll(android.view.View root){
         if(root instanceof android.widget.HorizontalScrollView)return (android.widget.HorizontalScrollView)root;
         if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.widget.HorizontalScrollView found=findTimelineScroll(g.getChildAt(i));if(found!=null)return found;}}return null;
@@ -85,7 +109,7 @@ public class ServicesInstrumentation extends Instrumentation {
     }
     private void checkUi(Activity a)throws Exception{
         capture(a,"login");
-        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();((android.widget.EditText)find(root,"Электронная почта")).setText("demo@example.test");((android.widget.EditText)find(root,"Пароль")).setText("demo");find(root,"Войти").performClick();});
+        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();android.widget.EditText login=(android.widget.EditText)find(root,"Логин"),password=(android.widget.EditText)find(root,"Пароль");check(login!=null&&password!=null,"username and password fields");check((login.getInputType()&android.text.InputType.TYPE_MASK_VARIATION)!=android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,"login permits non-email username");check(login.getImeOptions()==android.view.inputmethod.EditorInfo.IME_ACTION_NEXT&&password.getImeOptions()==android.view.inputmethod.EditorInfo.IME_ACTION_DONE,"keyboard next and done actions");login.setText("demo@example.test");login.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);check(password.hasFocus(),"Next focuses password");password.setText("demo");password.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);});
         long until=System.currentTimeMillis()+30000;AtomicBoolean home=new AtomicBoolean();
         while(System.currentTimeMillis()<until&&!home.get()){runOnMainSync(()->home.set(find(a.getWindow().getDecorView(),"Записи")!=null));Thread.sleep(250);}
         check(home.get(),"mock login and camera list");capture(a,"cameras");
