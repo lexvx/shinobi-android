@@ -18,4 +18,15 @@ public final class ArchiveTimeline {
     public static int offset(Interval row, long time) {
         return (int)Math.min(Integer.MAX_VALUE, Math.max(0, time - row.startMs()));
     }
+    public static long timeAt(double x, double width, long start, long end) {
+        if (width <= 0 || end <= start) return start;
+        return clamp(start + (long)(Math.max(0, Math.min(1, x / width)) * (end - start)), start, end);
+    }
+    public static double position(long time, double width, long start, long end) {
+        if (width <= 0 || end <= start) return 0;
+        return Math.max(0, Math.min(1, (double)(time - start) / (end - start))) * width;
+    }
+    public static int centeredScroll(double position, int contentWidth, int viewportWidth) {
+        return (int)Math.max(0, Math.min(Math.max(0, contentWidth - viewportWidth), position - viewportWidth / 2.0));
+    }
 }

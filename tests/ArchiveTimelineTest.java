@@ -19,7 +19,17 @@ public final class ArchiveTimelineTest {
         check(ArchiveTimeline.clamp(epoch+2000000,epoch,epoch+1200000)==epoch+1199999,"end clamped to playable instant");
         R overlap=new R(epoch+100000,epoch+200000);
         check(ArchiveTimeline.at(Arrays.asList(first,overlap),epoch+150000)==overlap,"latest overlapping segment selected");
-        System.out.println("ArchiveTimeline: 8 tests passed");
+        long dayEnd=epoch+86400000;
+        check(ArchiveTimeline.timeAt(400,1600,epoch,dayEnd)==epoch+21600000,"four-times scale shows six hours per viewport");
+        check(ArchiveTimeline.timeAt(-20,1600,epoch,dayEnd)==epoch,"left coordinate clamped");
+        check(ArchiveTimeline.timeAt(2000,1600,epoch,dayEnd)==dayEnd-1,"right coordinate playable clamp");
+        check(ArchiveTimeline.position(epoch+3600000,1600,epoch,dayEnd)>66.66&&ArchiveTimeline.position(epoch+3600000,1600,epoch,dayEnd)<66.67,"hourly tick spacing");
+        check(ArchiveTimeline.centeredScroll(800,1600,400)==600,"center selected time");
+        check(ArchiveTimeline.centeredScroll(0,1600,400)==0,"scroll left clamp");
+        check(ArchiveTimeline.centeredScroll(1600,1600,400)==1200,"scroll right clamp");
+        check(ArchiveTimeline.timeAt(200,0,epoch,dayEnd)==epoch,"zero-width layout safe");
+        check(ArchiveTimeline.timeAt(800,1600,epoch,epoch+23*3600000L)==epoch+23*1800000L,"DST day coordinate proportional");
+        System.out.println("ArchiveTimeline: 17 tests passed");
     }
     static void check(boolean ok,String name){if(!ok)throw new AssertionError(name);}
 }

@@ -41,6 +41,8 @@ public final class ArchiveViewer extends LinearLayout {
     private final TextView clock,status;
     private final Button play,quality,date,choose;
     private final TimelineView timeline;
+    private final HorizontalScrollView timelineScroll;
+    private boolean timelineTouched;
     private final SimpleDateFormat clockFormat=new SimpleDateFormat("dd MMM yyyy · HH:mm:ss",new Locale("ru"));
     private final SimpleDateFormat dateFormat=new SimpleDateFormat("dd MMMM",new Locale("ru"));
     private long dayStart,dayEnd,time,lastTick;
@@ -57,34 +59,39 @@ public final class ArchiveViewer extends LinearLayout {
 
     public ArchiveViewer(Context context,ApiClient api,List<ApiClient.Camera> cameras,boolean dark,Listener listener){
         super(context);this.api=api;this.cameras=new ArrayList<>(cameras);this.listener=listener;
-        foreground=dark?Color.rgb(237,243,249):Color.rgb(24,39,52);secondary=dark?Color.rgb(152,170,184):Color.rgb(96,114,128);surface=dark?Color.rgb(24,37,49):Color.WHITE;
+        foreground=dark?Color.rgb(237,243,249):Color.rgb(24,39,52);secondary=dark?Color.rgb(152,170,184):Color.rgb(96,114,128);surface=dark?Color.rgb(25,42,56):Color.WHITE;
         setOrientation(VERTICAL);setPadding(dp(14),dp(8),dp(14),dp(8));
         LinearLayout options=row();choose=button("Камеры",this::chooseCameras);date=button("Дата",this::pickDate);quality=button("SD",()->{});quality.setOnClickListener(v->{high=!high;quality.setText(high?"4К":"SD");for(Slot s:slots.values())loadSlot(s,ArchiveTimeline.at(s.rows,time));});
         options.addView(choose,weight());options.addView(date,weight());options.addView(quality);addView(options);
         clock=text("",14);clock.setSingleLine(true);clock.setEllipsize(android.text.TextUtils.TruncateAt.END);clock.setPadding(0,dp(6),0,dp(6));clock.setOnClickListener(v->pickTime());clock.setContentDescription("Выбрать время архива");addView(clock);
         ScrollView scroll=new ScrollView(context);wall=new LinearLayout(context);wall.setOrientation(VERTICAL);scroll.addView(wall);addView(scroll,new LayoutParams(-1,0,1));
         status=text("",12);status.setMaxLines(2);status.setEllipsize(android.text.TextUtils.TruncateAt.END);status.setTextColor(secondary);addView(status);
-        timeline=new TimelineView(context);addView(timeline,new LayoutParams(-1,dp(64)));
-        LinearLayout controls=row();controls.addView(button("−10",()->seek(time-10000)),weight());play=button("▶",()->{playing=!playing;lastTick=SystemClock.elapsedRealtime();sync();});play.setContentDescription("Воспроизвести или приостановить все камеры");controls.addView(play,weight());controls.addView(button("+10",()->seek(time+10000)),weight());controls.addView(button("Время",this::pickTime),weight());
+        timeline=new TimelineView(context);
+        timelineScroll=new HorizontalScrollView(context){
+            @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);timeline.setLayoutParams(new FrameLayout.LayoutParams(Math.max(1,w)*4,-1));if(!timelineTouched)post(()->centerTimeline(false));}
+            @Override public boolean onTouchEvent(MotionEvent e){if(e.getActionMasked()==MotionEvent.ACTION_MOVE)timelineTouched=true;return super.onTouchEvent(e);}
+        };
+        timelineScroll.setHorizontalScrollBarEnabled(false);timelineScroll.setOverScrollMode(OVER_SCROLL_NEVER);timelineScroll.addView(timeline,new FrameLayout.LayoutParams(dp(1200),-1));addView(timelineScroll,new LayoutParams(-1,dp(76)));
+        LinearLayout controls=row();controls.addView(button("−10",()->seek(time-10000)),weight());play=button("▶",()->{playing=!playing;lastTick=SystemClock.elapsedRealtime();sync();});play.setContentDescription("Воспроизвести или приостановить все камеры");controls.addView(play,weight());controls.addView(button("+10",()->seek(time+10000)),weight());
         Button speedButton=button("1×",()->{});speedButton.setOnClickListener(v->{String[] labels={"0,5×","1×","1,5×","2×"};float[] values={.5f,1,1.5f,2};new AlertDialog.Builder(context).setTitle("Скорость воспроизведения").setItems(labels,(d,n)->{speed=values[n];speedButton.setText(labels[n]);for(Slot s:slots.values())if(s.ready)applySpeed(s);}).show();});controls.addView(speedButton,weight());addView(controls);
         Calendar today=Calendar.getInstance();setDay(today);lastTick=SystemClock.elapsedRealtime();reload();ui.post(ticker);
     }
     private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
     private TextView text(String value,int sp){TextView v=new TextView(getContext());v.setText(value);v.setTextColor(foreground);v.setTextSize(sp);return v;}
     private LinearLayout row(){LinearLayout r=new LinearLayout(getContext());r.setGravity(Gravity.CENTER_VERTICAL);return r;}
-    private LayoutParams weight(){LayoutParams p=new LayoutParams(0,-2,1);p.setMargins(dp(2),dp(2),dp(2),dp(2));return p;}
-    private Button button(String label,Runnable action){Button b=new Button(getContext());b.setText(label);b.setTextColor(foreground);b.setAllCaps(false);b.setTextSize(12);b.setSingleLine(true);b.setEllipsize(android.text.TextUtils.TruncateAt.END);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(6),0,dp(6),0);GradientDrawable bg=new GradientDrawable();bg.setColor(surface);bg.setCornerRadius(dp(12));b.setBackground(bg);b.setOnClickListener(v->action.run());return b;}
-    private void setDay(Calendar day){day.set(Calendar.HOUR_OF_DAY,0);day.set(Calendar.MINUTE,0);day.set(Calendar.SECOND,0);day.set(Calendar.MILLISECOND,0);dayStart=day.getTimeInMillis();day.add(Calendar.DAY_OF_MONTH,1);dayEnd=day.getTimeInMillis();time=ArchiveTimeline.clamp(System.currentTimeMillis()-300000,dayStart,dayEnd);date.setText(dateFormat.format(new Date(dayStart)));}
+    private LayoutParams weight(){LayoutParams p=new LayoutParams(0,dp(44),1);p.setMargins(dp(2),dp(2),dp(2),dp(2));return p;}
+    private Button button(String label,Runnable action){Button b=new Button(getContext());b.setText(label);b.setTextColor(foreground);b.setAllCaps(false);b.setTextSize(14);b.setSingleLine(true);b.setEllipsize(android.text.TextUtils.TruncateAt.END);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(6),0,dp(6),0);GradientDrawable bg=new GradientDrawable();bg.setColor(surface);bg.setCornerRadius(dp(8));b.setBackground(bg);b.setOnClickListener(v->action.run());return b;}
+    private void setDay(Calendar day){timelineTouched=false;day.set(Calendar.HOUR_OF_DAY,0);day.set(Calendar.MINUTE,0);day.set(Calendar.SECOND,0);day.set(Calendar.MILLISECOND,0);dayStart=day.getTimeInMillis();day.add(Calendar.DAY_OF_MONTH,1);dayEnd=day.getTimeInMillis();time=ArchiveTimeline.clamp(System.currentTimeMillis()-300000,dayStart,dayEnd);date.setText(dateFormat.format(new Date(dayStart)));ui.post(()->centerTimeline(false));}
     private void pickDate(){Calendar c=Calendar.getInstance();c.setTimeInMillis(dayStart);new DatePickerDialog(getContext(),(v,y,m,d)->{Calendar chosen=Calendar.getInstance();chosen.set(y,m,d);setDay(chosen);reload();},c.get(Calendar.YEAR),c.get(Calendar.MONTH),c.get(Calendar.DAY_OF_MONTH)).show();}
-    private void pickTime(){Calendar c=Calendar.getInstance();c.setTimeInMillis(time);new TimePickerDialog(getContext(),(v,h,m)->{Calendar chosen=Calendar.getInstance();chosen.setTimeInMillis(dayStart);chosen.set(Calendar.HOUR_OF_DAY,h);chosen.set(Calendar.MINUTE,m);seek(chosen.getTimeInMillis());},c.get(Calendar.HOUR_OF_DAY),c.get(Calendar.MINUTE),true).show();}
-    private void chooseCameras(){String[] names=new String[cameras.size()];boolean[] checked=new boolean[names.length];for(int i=0;i<names.length;i++){names[i]=cameras.get(i).name;checked[i]=selected.contains(cameras.get(i).id);}new AlertDialog.Builder(getContext()).setTitle("Камеры в просмотрщике").setMultiChoiceItems(names,checked,(d,n,on)->checked[n]=on).setNegativeButton("Отмена",null).setPositiveButton("Показать",(d,w)->{selected.clear();for(int i=0;i<checked.length;i++)if(checked[i])selected.add(cameras.get(i).id);focused=null;reload();}).show();}
+    private void pickTime(){Calendar c=Calendar.getInstance();c.setTimeInMillis(time);new TimePickerDialog(getContext(),(v,h,m)->{Calendar chosen=Calendar.getInstance();chosen.setTimeInMillis(dayStart);chosen.set(Calendar.HOUR_OF_DAY,h);chosen.set(Calendar.MINUTE,m);seek(chosen.getTimeInMillis());centerTimeline(true);},c.get(Calendar.HOUR_OF_DAY),c.get(Calendar.MINUTE),true).show();}
+    private void chooseCameras(){String[] names=new String[cameras.size()];boolean[] checked=new boolean[names.length];for(int i=0;i<names.length;i++){names[i]=cameras.get(i).name;checked[i]=selected.contains(cameras.get(i).id);}new AlertDialog.Builder(getContext()).setTitle("Камеры · записи").setMultiChoiceItems(names,checked,(d,n,on)->checked[n]=on).setNegativeButton("Отмена",null).setPositiveButton("Показать",(d,w)->{selected.clear();for(int i=0;i<checked.length;i++)if(checked[i])selected.add(cameras.get(i).id);focused=null;reload();}).show();}
     private void reload(){
         if(disposed)return;
         final int request=++generation;loading=true;playing=false;clearSlots();wall.removeAllViews();choose.setText("Камеры · "+selected.size());status.setText("Загрузка записей…");
         for(ApiClient.Camera c:cameras)if(selected.contains(c.id)){Slot s=new Slot();s.camera=c;slots.put(c.id,s);}
         if(slots.isEmpty()){loading=false;status.setText("Выберите камеры");update();return;}
         buildTiles();final int[] remaining={slots.size()};final List<String> errors=new ArrayList<>();final long from=dayStart,to=dayEnd;
-        for(Slot s:slots.values())workers.execute(()->{List<ApiClient.Recording> rows;String failure=null;try{rows=api.recordings(s.camera.id,from,to);}catch(Exception e){rows=Collections.emptyList();failure="Не удалось загрузить записи";}final List<ApiClient.Recording> result=rows;final String problem=failure;ui.post(()->{if(disposed||request!=generation)return;s.rows=result;if(problem!=null){errors.add(s.camera.name);state(s,problem);}if(--remaining[0]==0){loading=false;long latest=dayStart;boolean any=false;for(Slot slot:slots.values())for(ApiClient.Recording r:slot.rows){latest=Math.max(latest,r.startMs);any=true;}if(any)time=latest;status.setText(errors.isEmpty()?"":"Не загружены: "+join(errors));sync();timeline.invalidate();}});});
+        for(Slot s:slots.values())workers.execute(()->{List<ApiClient.Recording> rows;String failure=null;try{rows=api.recordings(s.camera.id,from,to);}catch(Exception e){rows=Collections.emptyList();failure="Не удалось загрузить записи";}final List<ApiClient.Recording> result=rows;final String problem=failure;ui.post(()->{if(disposed||request!=generation)return;s.rows=result;if(problem!=null){errors.add(s.camera.name);state(s,problem);}if(--remaining[0]==0){loading=false;long latest=dayStart;boolean any=false;for(Slot slot:slots.values())for(ApiClient.Recording r:slot.rows){latest=Math.max(latest,r.startMs);any=true;}if(any)time=latest;if(!timelineTouched)centerTimeline(false);status.setText(errors.isEmpty()?"":"Не загружены: "+join(errors));sync();timeline.invalidate();}});});
     }
     private String join(List<String> values){StringBuilder b=new StringBuilder();for(String v:values){if(b.length()>0)b.append(", ");b.append(v);}return b.toString();}
     private void buildTiles(){wall.removeAllViews();for(Slot s:slots.values()){
@@ -141,16 +148,32 @@ public final class ArchiveViewer extends LinearLayout {
     public void resume(){if(disposed)return;active=true;lastTick=SystemClock.elapsedRealtime();sync();}
     public void destroy(){if(disposed)return;disposed=true;++generation;ui.removeCallbacksAndMessages(null);clearSlots();workers.shutdownNow();}
 
+    private void centerTimeline(boolean explicit){
+        if(disposed||(!explicit&&timelineTouched))return;
+        int x=ArchiveTimeline.centeredScroll(ArchiveTimeline.position(time,timeline.getWidth(),dayStart,dayEnd),timeline.getWidth(),timelineScroll.getWidth());
+        timelineScroll.scrollTo(x,0);
+    }
     private final class TimelineView extends View {
         final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-        long preview=-1;
-        TimelineView(Context context){super(context);setContentDescription("Общая шкала архива за выбранный день. Нажмите для перехода.");setFocusable(true);}
-        @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);float w=getWidth(),h=getHeight(),top=dp(6),bottom=h-dp(20);paint.setColor(surface);canvas.drawRoundRect(new RectF(0,top,w,bottom),dp(5),dp(5),paint);int lane=0,n=Math.max(1,slots.size());for(Slot s:slots.values()){paint.setColor(accent);for(ApiClient.Recording r:s.rows){float x1=(float)(Math.max(dayStart,r.startMs)-dayStart)/(dayEnd-dayStart)*w,x2=(float)(Math.min(dayEnd,r.endMs)-dayStart)/(dayEnd-dayStart)*w;if(x2>x1)canvas.drawRect(x1,top+lane*(bottom-top)/n+1,x2,top+(lane+1)*(bottom-top)/n-1,paint);}lane++;}paint.setColor(foreground);float cursor=(float)((preview>=0?preview:time)-dayStart)/(dayEnd-dayStart)*w;paint.setStrokeWidth(dp(2));canvas.drawLine(cursor,top-2,cursor,bottom+2,paint);paint.setTextSize(dp(10));paint.setColor(secondary);for(int hour=0;hour<=24;hour+=6){String label=String.format(Locale.ROOT,"%02d:00",hour);float x=w*hour/24;canvas.drawText(label,Math.max(0,Math.min(w-paint.measureText(label),x-paint.measureText(label)/2)),h-dp(3),paint);}}
+        long preview=-1;float downX,downY;boolean pressed,scrubbing,moved;
+        final int slop=android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        final Runnable hold=()->{if(pressed&&!moved){scrubbing=true;timelineTouched=true;getParent().requestDisallowInterceptTouchEvent(true);preview=ArchiveTimeline.timeAt(downX,getWidth(),dayStart,dayEnd);invalidate();}};
+        TimelineView(Context context){super(context);setContentDescription("Записи за сутки. Прокрутите шкалу; коснитесь времени для перехода. Удерживайте или тяните указатель для точного выбора.");setFocusable(true);}
+        @Override protected void onDraw(Canvas canvas){
+            super.onDraw(canvas);float w=getWidth(),h=getHeight(),top=dp(8),bottom=h-dp(27);paint.setColor(surface);canvas.drawRect(0,top,w,bottom,paint);
+            int lane=0,n=Math.max(1,slots.size());
+            for(Slot slot:slots.values()){paint.setColor(accent);for(ApiClient.Recording r:slot.rows){float x1=(float)ArchiveTimeline.position(Math.max(dayStart,r.startMs),w,dayStart,dayEnd),x2=(float)ArchiveTimeline.position(Math.min(dayEnd,r.endMs),w,dayStart,dayEnd);if(x2>x1)canvas.drawRect(x1,top+lane*(bottom-top)/n+1,x2,top+(lane+1)*(bottom-top)/n-1,paint);}lane++;}
+            paint.setTextSize(dp(10));paint.setStrokeWidth(dp(1));
+            Calendar tick=Calendar.getInstance();tick.setTimeInMillis(dayStart);
+            while(tick.getTimeInMillis()<=dayEnd){long instant=tick.getTimeInMillis();float x=(float)ArchiveTimeline.position(instant,w,dayStart,dayEnd);paint.setColor(secondary);canvas.drawLine(x,bottom,x,bottom+dp(5),paint);String label=instant==dayEnd?"24:00":String.format(Locale.ROOT,"%02d:00",tick.get(Calendar.HOUR_OF_DAY));canvas.drawText(label,Math.max(0,Math.min(w-paint.measureText(label),x-paint.measureText(label)/2)),h-dp(4),paint);tick.add(Calendar.HOUR_OF_DAY,1);}
+            paint.setColor(foreground);float cursor=(float)ArchiveTimeline.position(preview>=0?preview:time,w,dayStart,dayEnd);paint.setStrokeWidth(dp(2));canvas.drawLine(cursor,top-3,cursor,bottom+3,paint);canvas.drawCircle(cursor,top,dp(4),paint);
+        }
         @Override public boolean onTouchEvent(MotionEvent event){
             int action=event.getActionMasked();
-            if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_MOVE){getParent().requestDisallowInterceptTouchEvent(true);preview=ArchiveTimeline.clamp(dayStart+(long)(Math.max(0,Math.min(1,event.getX()/Math.max(1,getWidth())))*(dayEnd-dayStart)),dayStart,dayEnd);invalidate();return true;}
-            if(action==MotionEvent.ACTION_UP){long target=preview;preview=-1;if(target>=0)seek(target);performClick();getParent().requestDisallowInterceptTouchEvent(false);return true;}
-            if(action==MotionEvent.ACTION_CANCEL){preview=-1;invalidate();getParent().requestDisallowInterceptTouchEvent(false);}return true;
+            if(action==MotionEvent.ACTION_DOWN){pressed=true;moved=false;downX=event.getX();downY=event.getY();scrubbing=Math.abs(downX-ArchiveTimeline.position(time,getWidth(),dayStart,dayEnd))<=dp(14);if(scrubbing){timelineTouched=true;getParent().requestDisallowInterceptTouchEvent(true);preview=ArchiveTimeline.timeAt(downX,getWidth(),dayStart,dayEnd);}else ui.postDelayed(hold,android.view.ViewConfiguration.getLongPressTimeout());return true;}
+            if(action==MotionEvent.ACTION_MOVE){if(Math.abs(event.getX()-downX)>slop||Math.abs(event.getY()-downY)>slop){moved=true;ui.removeCallbacks(hold);}if(scrubbing){preview=ArchiveTimeline.timeAt(event.getX(),getWidth(),dayStart,dayEnd);invalidate();}return true;}
+            if(action==MotionEvent.ACTION_UP){ui.removeCallbacks(hold);pressed=false;if(scrubbing||!moved){timelineTouched=true;seek(ArchiveTimeline.timeAt(event.getX(),getWidth(),dayStart,dayEnd));performClick();}preview=-1;scrubbing=false;getParent().requestDisallowInterceptTouchEvent(false);invalidate();return true;}
+            if(action==MotionEvent.ACTION_CANCEL){ui.removeCallbacks(hold);pressed=false;preview=-1;scrubbing=false;getParent().requestDisallowInterceptTouchEvent(false);invalidate();}return true;
         }
         @Override public boolean performClick(){super.performClick();return true;}
     }

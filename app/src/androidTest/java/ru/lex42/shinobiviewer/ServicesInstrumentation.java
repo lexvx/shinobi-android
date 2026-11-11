@@ -49,6 +49,7 @@ public class ServicesInstrumentation extends Instrumentation {
         finally {if(activity!=null){Activity target=activity;runOnMainSync(target::finish);}}
     }
     private android.view.View find(android.view.View root,String label){
+        if(label.contentEquals(root.getContentDescription()==null?"":root.getContentDescription()))return root;
         if(root instanceof android.widget.TextView){android.widget.TextView t=(android.widget.TextView)root;if(label.contentEquals(t.getText())||(t.getHint()!=null&&label.contentEquals(t.getHint())))return root;}
         if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.view.View found=find(g.getChildAt(i),label);if(found!=null)return found;}}return null;
     }
@@ -59,9 +60,12 @@ public class ServicesInstrumentation extends Instrumentation {
         capture(a,"login");
         runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();((android.widget.EditText)find(root,"Электронная почта")).setText("demo@example.test");((android.widget.EditText)find(root,"Пароль")).setText("demo");find(root,"Войти").performClick();});
         long until=System.currentTimeMillis()+30000;AtomicBoolean home=new AtomicBoolean();
-        while(System.currentTimeMillis()<until&&!home.get()){runOnMainSync(()->home.set(find(a.getWindow().getDecorView(),"▦  Сетка")!=null));Thread.sleep(250);}
+        while(System.currentTimeMillis()<until&&!home.get()){runOnMainSync(()->home.set(find(a.getWindow().getDecorView(),"Записи")!=null));Thread.sleep(250);}
         check(home.get(),"mock login and camera list");capture(a,"cameras");
-        runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");find(a.getWindow().getDecorView(),"◷\nПросмотрщик").performClick();});
+        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Переключить сетку и ленту")!=null,"single wall toggle");find(root,"Переключить сетку и ленту").performClick();find(root,"Настройки").performClick();});
+        capture(a,"settings");
+        runOnMainSync(()->{android.view.View root=a.getWindow().getDecorView();check(find(root,"Тема приложения")!=null,"dedicated settings page");find(root,"Тёмная").performClick();check(find(a.getWindow().getDecorView(),"Системная")!=null,"theme setting survives redraw");find(a.getWindow().getDecorView(),"Системная").performClick();find(a.getWindow().getDecorView(),"Назад").performClick();});
+        runOnMainSync(()->{check(find(a.getWindow().getDecorView(),"Крыльцо")!=null,"authorized camera tile");find(a.getWindow().getDecorView(),"Записи").performClick();});
         Thread.sleep(2000);capture(a,"viewer");
         runOnMainSync(()->check(find(a.getWindow().getDecorView(),"Выберите камеры")!=null,"viewer navigation"));
     }
